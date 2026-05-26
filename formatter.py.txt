@@ -1,0 +1,44 @@
+from llm import llm
+
+
+def format_case_summary(chunks):
+    context = "\n\n".join([c["text"] for c in chunks])
+
+    prompt = f"""
+You are a legal case summariser.
+
+Extract ONLY from context.
+
+FORMAT:
+
+Facts:
+Holding:
+Remarks:
+
+CONTEXT:
+{context}
+"""
+
+    return llm.invoke(prompt).content
+
+
+def format_irac(query, chunks):
+    context = "\n\n".join([c["text"] for c in chunks])
+
+    prompt = f"""
+You are a Singapore law IRAC assistant.
+
+QUESTION:
+{query}
+
+CONTEXT:
+{context}
+
+FORMAT:
+Issue:
+Rule:
+Application:
+Conclusion:
+"""
+
+    return llm.invoke(prompt).content

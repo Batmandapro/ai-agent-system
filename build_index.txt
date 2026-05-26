@@ -1,0 +1,22 @@
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+from llama_index.core.node_parser import SimpleNodeParser
+from llama_index.embeddings.ollama import OllamaEmbedding
+
+docs = SimpleDirectoryReader("docs").load_data()
+
+parser = SimpleNodeParser.from_defaults(
+    chunk_size=512,
+    chunk_overlap=50
+)
+
+nodes = parser.get_nodes_from_documents(docs)
+
+embed_model = OllamaEmbedding(model_name="nomic-embed-text")
+
+Settings.embed_model = embed_model
+
+index = VectorStoreIndex(nodes, embed_model=embed_model)
+
+index.storage_context.persist(persist_dir="./storage")
+
+print("Index built and saved.")
