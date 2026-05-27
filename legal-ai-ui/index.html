@@ -1,0 +1,1754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lex SG — Singapore Legal AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ============================================================
+       DESIGN TOKENS — Singapore Legal AI colour palette
+       ============================================================ */
+    :root {
+      --bg:          #0c0e14;
+      --surface:     #111420;
+      --surface-2:   #161a2a;
+      --border:      #1f2335;
+      --gold:        #c9a84c;
+      --gold-soft:   rgba(201, 168, 76, 0.15);
+      --gold-dim:    rgba(201, 168, 76, 0.35);
+      --text:        #e6e8ef;
+      --text-dim:    #8a90a3;
+      --text-faint:  #5a6076;
+      --danger:      #d9534f;
+      --green:       #4caf7d;
+      --blue:        #4a9eff;
+      --purple:      #9b59b6;
+    }
+
+    /* ============================================================
+       RESET & BASE
+       ============================================================ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button {
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    select {
+      font-family: inherit;
+    }
+
+    textarea {
+      font-family: inherit;
+      resize: none;
+    }
+
+    /* ============================================================
+       APP SHELL — full-viewport layout
+       ============================================================ */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ============================================================
+       TOP TAB BAR
+       ============================================================ */
+    #tab-bar {
+      display: flex;
+      align-items: stretch;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+      gap: 4px;
+      flex-shrink: 0;
+      height: 48px;
+    }
+
+    .tab-btn {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 20px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      transition: color 0.2s;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px; /* align underline with bar bottom border */
+      white-space: nowrap;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      color: var(--gold);
+      border-bottom-color: var(--gold);
+    }
+
+    /* Badge — red circle with count */
+    .tab-badge {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: var(--danger);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 50%;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 3px;
+      line-height: 1;
+    }
+
+    .tab-badge.visible {
+      display: flex;
+    }
+
+    /* ============================================================
+       MAIN CONTENT AREA (below tab bar)
+       ============================================================ */
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ============================================================
+       LEFT SIDEBAR — always visible
+       ============================================================ */
+    #sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .sidebar-brand {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand-name {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--gold);
+      letter-spacing: 0.01em;
+      line-height: 1.2;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-faint);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    .sidebar-section {
+      padding: 14px 16px;
+      flex: 1;
+    }
+
+    .sidebar-heading {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin-bottom: 10px;
+    }
+
+    /* Mode dropdown in sidebar (Legal AI) */
+    .sidebar-mode-select {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238a90a3' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 28px;
+    }
+
+    /* Source list items */
+    .source-item {
+      font-size: 12px;
+      color: var(--text-dim);
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+      cursor: default;
+      word-break: break-all;
+    }
+
+    .source-item:last-child {
+      border-bottom: none;
+    }
+
+    /* Command chips — Python Agent & Gemini */
+    .chip-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .cmd-chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-size: 12px;
+      padding: 6px 10px;
+      text-align: left;
+      transition: border-color 0.2s, color 0.2s;
+      cursor: pointer;
+    }
+
+    .cmd-chip:hover {
+      border-color: var(--gold-dim);
+      color: var(--text);
+    }
+
+    /* ============================================================
+       CENTRE PANEL
+       ============================================================ */
+    #centre {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    /* Tab panel visibility */
+    .tab-panel {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .tab-panel.active {
+      display: flex;
+    }
+
+    /* Centre header row */
+    .centre-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: var(--surface);
+      gap: 12px;
+    }
+
+    .centre-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    /* Mode dropdown in header (Legal AI) */
+    .header-mode-select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 28px 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238a90a3' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+    }
+
+    /* Search Online toggle */
+    #search-online-btn {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: 12.5px;
+      font-weight: 500;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    #search-online-btn.on {
+      background: var(--gold-soft);
+      border-color: var(--gold-dim);
+      color: var(--gold);
+    }
+
+    /* ============================================================
+       RESPONSE AREA — scrollable card list
+       ============================================================ */
+    .response-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .response-area:empty::after {
+      content: 'No results yet — send a query below.';
+      color: var(--text-faint);
+      font-size: 13px;
+      text-align: center;
+      margin-top: 40px;
+      display: block;
+    }
+
+    /* ============================================================
+       RESPONSE CARDS
+       ============================================================ */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      animation: cardIn 0.25s ease;
+    }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .mode-pill {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .mode-pill.legal    { background: var(--gold-soft); color: var(--gold); border: 1px solid var(--gold-dim); }
+    .mode-pill.agent    { background: rgba(74, 158, 255, 0.15); color: var(--blue); border: 1px solid rgba(74, 158, 255, 0.35); }
+    .mode-pill.gemini   { background: rgba(155, 89, 182, 0.15); color: var(--purple); border: 1px solid rgba(155, 89, 182, 0.35); }
+    .mode-pill.error    { background: rgba(217, 83, 79, 0.15); color: var(--danger); border: 1px solid rgba(217, 83, 79, 0.35); }
+
+    .card-timestamp {
+      font-size: 11px;
+      color: var(--text-faint);
+      margin-left: auto;
+    }
+
+    .card-query {
+      font-style: italic;
+      color: var(--text-dim);
+      font-size: 13px;
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-body {
+      font-size: 13.5px;
+      color: var(--text);
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Section headings detected in response body */
+    .card-body .section-heading {
+      display: block;
+      font-weight: 600;
+      color: var(--gold);
+      margin-top: 12px;
+      margin-bottom: 4px;
+      font-size: 13px;
+      letter-spacing: 0.03em;
+    }
+
+    /* Error card variant */
+    .card.error-card {
+      border-color: rgba(217, 83, 79, 0.4);
+      background: rgba(217, 83, 79, 0.07);
+    }
+
+    /* ============================================================
+       RESEARCH SPINNER
+       ============================================================ */
+    #research-spinner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      color: var(--gold);
+      font-size: 12.5px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    #research-spinner.visible {
+      display: flex;
+    }
+
+    .spinner-ring {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--gold-dim);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ============================================================
+       HISTORY CHIPS — above input
+       ============================================================ */
+    .history-bar {
+      display: flex;
+      gap: 6px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      padding: 8px 16px 4px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+      scrollbar-width: none;
+    }
+
+    .history-bar::-webkit-scrollbar { display: none; }
+
+    .history-bar:empty { display: none; }
+
+    .history-chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--text-dim);
+      font-size: 11.5px;
+      padding: 3px 10px;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: border-color 0.18s, color 0.18s;
+      flex-shrink: 0;
+    }
+
+    .history-chip:hover {
+      border-color: var(--gold-dim);
+      color: var(--text);
+    }
+
+    /* ============================================================
+       INPUT BAR
+       ============================================================ */
+    .input-bar {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    .input-wrap {
+      flex: 1;
+      position: relative;
+    }
+
+    .input-textarea {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13.5px;
+      padding: 10px 12px;
+      min-height: 44px;
+      max-height: 140px;
+      line-height: 1.5;
+      transition: border-color 0.18s;
+      overflow-y: auto;
+    }
+
+    .input-textarea:focus {
+      outline: none;
+      border-color: var(--gold-dim);
+    }
+
+    .input-textarea::placeholder {
+      color: var(--text-faint);
+    }
+
+    .input-hint {
+      position: absolute;
+      bottom: -18px;
+      right: 4px;
+      font-size: 10px;
+      color: var(--text-faint);
+    }
+
+    .send-btn {
+      background: var(--gold);
+      border: none;
+      border-radius: 8px;
+      color: var(--bg);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 10px 18px;
+      height: 44px;
+      transition: opacity 0.18s, transform 0.1s;
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover   { opacity: 0.88; }
+    .send-btn:active  { transform: scale(0.97); }
+    .send-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* ============================================================
+       RIGHT PANEL
+       ============================================================ */
+    #right-panel {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .right-header {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+
+    .right-content {
+      flex: 1;
+      padding: 12px 14px;
+    }
+
+    /* Source items in right panel */
+    .right-source-item {
+      font-size: 12px;
+      color: var(--text-dim);
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      word-break: break-all;
+      line-height: 1.4;
+    }
+
+    .right-source-item:last-child { border-bottom: none; }
+
+    .right-empty {
+      font-size: 12px;
+      color: var(--text-faint);
+      padding-top: 4px;
+    }
+
+    /* Project files list */
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-item:last-child { border-bottom: none; }
+
+    .file-icon {
+      font-size: 11px;
+      color: var(--blue);
+      font-weight: 600;
+    }
+
+    /* Status items */
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .status-row:last-child { border-bottom: none; }
+
+    .status-label { color: var(--text-faint); }
+
+    .status-ok   { color: var(--green); font-weight: 600; }
+    .status-bad  { color: var(--danger); font-weight: 600; }
+    .status-info { color: var(--text-dim); }
+
+    /* ============================================================
+       POP-UP NOTIFICATION
+       ============================================================ */
+    #notification {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      max-width: 320px;
+      background: var(--surface-2);
+      border: 1px solid var(--gold-dim);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      z-index: 1000;
+      transform: translateY(8px);
+      opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+    }
+
+    #notification.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    #notification.error-notif {
+      border-color: rgba(217, 83, 79, 0.5);
+    }
+
+    .notif-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gold);
+      margin-bottom: 4px;
+    }
+
+    #notification.error-notif .notif-title {
+      color: var(--danger);
+    }
+
+    .notif-body {
+      font-size: 12.5px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    .notif-close {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    /* ============================================================
+       LOADING SKELETON in cards
+       ============================================================ */
+    .skeleton-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .skeleton-line {
+      height: 12px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      margin-bottom: 8px;
+    }
+
+    @keyframes shimmer {
+      from { background-position: 200% 0; }
+      to   { background-position: -200% 0; }
+    }
+
+    /* ============================================================
+       RESPONSIVE — mobile (≤700px)
+       ============================================================ */
+    @media (max-width: 700px) {
+      #sidebar  { display: none; }
+      #right-panel { display: none; }
+
+      /* Mode chips row shown below centre-header on Legal AI */
+      #mobile-mode-row {
+        display: flex !important;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .mobile-mode-chip {
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        color: var(--text-dim);
+        font-size: 11.5px;
+        padding: 4px 10px;
+        cursor: pointer;
+        transition: all 0.18s;
+      }
+
+      .mobile-mode-chip.active {
+        background: var(--gold-soft);
+        border-color: var(--gold-dim);
+        color: var(--gold);
+      }
+    }
+
+    #mobile-mode-row {
+      display: none; /* hidden on desktop */
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ================================================================
+       TOP TAB BAR
+       ================================================================ -->
+  <div id="tab-bar">
+    <button class="tab-btn active" data-tab="legal" id="tab-legal">
+      Legal AI
+      <span class="tab-badge" id="badge-legal">0</span>
+    </button>
+    <button class="tab-btn" data-tab="python" id="tab-python">
+      Python Agent
+      <span class="tab-badge" id="badge-python">0</span>
+    </button>
+    <button class="tab-btn" data-tab="gemini" id="tab-gemini">
+      Gemini Agent
+      <span class="tab-badge" id="badge-gemini">0</span>
+    </button>
+  </div>
+
+  <!-- ================================================================
+       MAIN LAYOUT (sidebar | centre | right panel)
+       ================================================================ -->
+  <div id="main">
+
+    <!-- ==================== LEFT SIDEBAR ========================== -->
+    <aside id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-name">Lex SG</div>
+        <div class="brand-sub">Legal AI</div>
+      </div>
+
+      <!-- Legal AI sidebar content -->
+      <div class="sidebar-section" id="sidebar-legal">
+        <div class="sidebar-heading">Mode</div>
+        <select class="sidebar-mode-select" id="sidebar-mode-select">
+          <option value="IRAC">IRAC</option>
+          <option value="Case Summary">Case Summary</option>
+          <option value="Synthesis">Synthesis</option>
+          <option value="Sentencing">Sentencing</option>
+          <option value="Elements">Elements</option>
+          <option value="Procedure">Procedure</option>
+          <option value="Drafting">Drafting</option>
+        </select>
+        <div class="sidebar-heading">Sources</div>
+        <div id="sidebar-sources">
+          <div class="source-item" style="color:var(--text-faint);font-size:12px;">No sources yet.</div>
+        </div>
+      </div>
+
+      <!-- Python Agent sidebar content (hidden by default) -->
+      <div class="sidebar-section" id="sidebar-python" style="display:none;">
+        <div class="sidebar-heading">Commands</div>
+        <div class="chip-list">
+          <button class="cmd-chip" data-cmd="review ingest.py">review ingest.py</button>
+          <button class="cmd-chip" data-cmd="rewrite ingest.py">rewrite ingest.py</button>
+          <button class="cmd-chip" data-cmd="improve query_engine.py">improve query_engine.py</button>
+          <button class="cmd-chip" data-cmd="troubleshoot api.py">troubleshoot api.py</button>
+          <button class="cmd-chip" data-cmd="list files">list files</button>
+          <button class="cmd-chip" data-cmd="history">history</button>
+        </div>
+      </div>
+
+      <!-- Gemini Agent sidebar content (hidden by default) -->
+      <div class="sidebar-section" id="sidebar-gemini" style="display:none;">
+        <div class="sidebar-heading">Commands</div>
+        <div class="chip-list">
+          <button class="cmd-chip" data-cmd="review codebase">review codebase</button>
+          <button class="cmd-chip" data-cmd="suggest improvements">suggest improvements</button>
+          <button class="cmd-chip" data-cmd="explain this error">explain this error</button>
+          <button class="cmd-chip" data-cmd="what changed recently">what changed recently</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ==================== CENTRE PANEL ========================== -->
+    <main id="centre">
+
+      <!-- ---- TAB 1: Legal AI ---- -->
+      <div class="tab-panel active" id="panel-legal">
+        <div class="centre-header">
+          <select class="header-mode-select" id="header-mode-select">
+            <option value="IRAC">IRAC</option>
+            <option value="Case Summary">Case Summary</option>
+            <option value="Synthesis">Synthesis</option>
+            <option value="Sentencing">Sentencing</option>
+            <option value="Elements">Elements</option>
+            <option value="Procedure">Procedure</option>
+            <option value="Drafting">Drafting</option>
+          </select>
+          <button id="search-online-btn" title="Toggle background web research">&#x1F50D; Search Online</button>
+        </div>
+
+        <!-- Mobile mode chips (hidden on desktop) -->
+        <div id="mobile-mode-row">
+          <button class="mobile-mode-chip active" data-mode="IRAC">IRAC</button>
+          <button class="mobile-mode-chip" data-mode="Case Summary">Case Summary</button>
+          <button class="mobile-mode-chip" data-mode="Synthesis">Synthesis</button>
+          <button class="mobile-mode-chip" data-mode="Sentencing">Sentencing</button>
+          <button class="mobile-mode-chip" data-mode="Elements">Elements</button>
+          <button class="mobile-mode-chip" data-mode="Procedure">Procedure</button>
+          <button class="mobile-mode-chip" data-mode="Drafting">Drafting</button>
+        </div>
+
+        <div class="response-area" id="legal-responses"></div>
+
+        <!-- Research spinner -->
+        <div id="research-spinner">
+          <div class="spinner-ring"></div>
+          <span>Research running in the background&hellip;</span>
+        </div>
+
+        <!-- History chips -->
+        <div class="history-bar" id="legal-history-bar"></div>
+
+        <div class="input-bar">
+          <div class="input-wrap">
+            <textarea
+              class="input-textarea"
+              id="legal-input"
+              placeholder="Ask a legal question (e.g. What are the elements of criminal breach of trust in Singapore?)..."
+              rows="1"
+            ></textarea>
+            <span class="input-hint">Ctrl+Enter to send</span>
+          </div>
+          <button class="send-btn" id="legal-send">Send</button>
+        </div>
+      </div>
+
+      <!-- ---- TAB 2: Python Agent ---- -->
+      <div class="tab-panel" id="panel-python">
+        <div class="centre-header">
+          <span class="centre-title">Python Coding Assistant</span>
+        </div>
+
+        <div class="response-area" id="python-responses"></div>
+
+        <div class="history-bar" id="python-history-bar"></div>
+
+        <div class="input-bar">
+          <div class="input-wrap">
+            <textarea
+              class="input-textarea"
+              id="python-input"
+              placeholder="Type a command (e.g. review ingest.py)..."
+              rows="1"
+            ></textarea>
+            <span class="input-hint">Ctrl+Enter to send</span>
+          </div>
+          <button class="send-btn" id="python-send">Send</button>
+        </div>
+      </div>
+
+      <!-- ---- TAB 3: Gemini Agent ---- -->
+      <div class="tab-panel" id="panel-gemini">
+        <div class="centre-header">
+          <span class="centre-title">Gemini AI Assistant</span>
+        </div>
+
+        <div class="response-area" id="gemini-responses"></div>
+
+        <div class="history-bar" id="gemini-history-bar"></div>
+
+        <div class="input-bar">
+          <div class="input-wrap">
+            <textarea
+              class="input-textarea"
+              id="gemini-input"
+              placeholder="Ask Gemini about the codebase..."
+              rows="1"
+            ></textarea>
+            <span class="input-hint">Ctrl+Enter to send</span>
+          </div>
+          <button class="send-btn" id="gemini-send">Send</button>
+        </div>
+      </div>
+
+    </main><!-- /#centre -->
+
+    <!-- ==================== RIGHT PANEL ========================== -->
+    <aside id="right-panel">
+
+      <!-- Right panel: Legal AI — Sources -->
+      <div id="right-legal">
+        <div class="right-header">Sources</div>
+        <div class="right-content">
+          <div class="right-content-inner" id="right-sources">
+            <div class="right-empty">Sources from your last query will appear here.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right panel: Python Agent — Project Files -->
+      <div id="right-python" style="display:none;">
+        <div class="right-header">Project Files</div>
+        <div class="right-content">
+          <div id="right-files">
+            <div class="right-empty">Loading files&hellip;</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right panel: Gemini Agent — Status -->
+      <div id="right-gemini" style="display:none;">
+        <div class="right-header">Status</div>
+        <div class="right-content">
+          <div id="right-status">
+            <div class="status-row">
+              <span class="status-label">API Key</span>
+              <span class="status-info" id="gemini-key-status">Checking&hellip;</span>
+            </div>
+            <div class="status-row">
+              <span class="status-label">Model</span>
+              <span class="status-info">gemini-2.5-flash</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </div><!-- /#main -->
+</div><!-- /#app -->
+
+<!-- Pop-up notification -->
+<div id="notification" role="alert" aria-live="polite">
+  <button class="notif-close" id="notif-close" aria-label="Close">&times;</button>
+  <div class="notif-title" id="notif-title">Research complete</div>
+  <div class="notif-body"  id="notif-body"></div>
+</div>
+
+<!-- ================================================================
+     JAVASCRIPT — single IIFE, vanilla JS only
+     ================================================================ -->
+<script>
+(function () {
+  'use strict';
+
+  /* ================================================================
+     CONSTANTS & CONFIGURATION
+     ================================================================ */
+  const API_BASE      = 'http://localhost:5000';
+  const HISTORY_KEYS  = { legal: 'lai_history', python: 'agent_history', gemini: 'gemini_history' };
+  const MAX_HISTORY   = 10;
+  const POLL_INTERVAL = 3000; // ms — how often to poll research status
+
+  /* ================================================================
+     STATE
+     ================================================================ */
+  let activeTab        = 'legal';       // 'legal' | 'python' | 'gemini'
+  let searchOnline     = false;         // Search Online toggle
+  let researchPollId   = null;          // setInterval id for research polling
+  let badges           = { legal: 0, python: 0, gemini: 0 }; // unread badge counts
+
+  /* Mode mirrors between header select and sidebar select */
+  let currentMode = 'IRAC';
+
+  /* ================================================================
+     DOM REFERENCES
+     ================================================================ */
+  const $ = id => document.getElementById(id);
+
+  const tabBtns        = document.querySelectorAll('.tab-btn');
+  const tabPanels      = document.querySelectorAll('.tab-panel');
+
+  const sidebarLegal   = $('sidebar-legal');
+  const sidebarPython  = $('sidebar-python');
+  const sidebarGemini  = $('sidebar-gemini');
+
+  const rightLegal     = $('right-legal');
+  const rightPython    = $('right-python');
+  const rightGemini    = $('right-gemini');
+
+  const headerModeSelect  = $('header-mode-select');
+  const sidebarModeSelect = $('sidebar-mode-select');
+  const searchOnlineBtn   = $('search-online-btn');
+  const researchSpinner   = $('research-spinner');
+
+  const legalResponses    = $('legal-responses');
+  const pythonResponses   = $('python-responses');
+  const geminiResponses   = $('gemini-responses');
+
+  const legalInput        = $('legal-input');
+  const pythonInput       = $('python-input');
+  const geminiInput       = $('gemini-input');
+
+  const legalSend         = $('legal-send');
+  const pythonSend        = $('python-send');
+  const geminiSend        = $('gemini-send');
+
+  const legalHistoryBar   = $('legal-history-bar');
+  const pythonHistoryBar  = $('python-history-bar');
+  const geminiHistoryBar  = $('gemini-history-bar');
+
+  const notifEl           = $('notification');
+  const notifTitle        = $('notif-title');
+  const notifBody         = $('notif-body');
+  const notifClose        = $('notif-close');
+
+  const rightSources      = $('right-sources');
+  const rightFiles        = $('right-files');
+  const geminiKeyStatus   = $('gemini-key-status');
+
+  /* ================================================================
+     TAB SWITCHING
+     ================================================================ */
+  function switchTab(tab) {
+    activeTab = tab;
+
+    /* Update tab button states */
+    tabBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+
+    /* Update centre panels */
+    tabPanels.forEach(panel => {
+      panel.classList.toggle('active', panel.id === `panel-${tab}`);
+    });
+
+    /* Update sidebar sections */
+    sidebarLegal.style.display  = tab === 'legal'  ? '' : 'none';
+    sidebarPython.style.display = tab === 'python' ? '' : 'none';
+    sidebarGemini.style.display = tab === 'gemini' ? '' : 'none';
+
+    /* Update right panels */
+    rightLegal.style.display  = tab === 'legal'  ? '' : 'none';
+    rightPython.style.display = tab === 'python' ? '' : 'none';
+    rightGemini.style.display = tab === 'gemini' ? '' : 'none';
+
+    /* Clear badge for the tab we've just switched to */
+    if (badges[tab] > 0) {
+      badges[tab] = 0;
+      updateBadge(tab);
+    }
+
+    /* Load project files when switching to Python tab */
+    if (tab === 'python') fetchProjectFiles();
+
+    /* Check Gemini health when switching to Gemini tab */
+    if (tab === 'gemini') checkGeminiHealth();
+  }
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  /* ================================================================
+     BADGE HELPERS
+     ================================================================ */
+  function incrementBadge(tab) {
+    badges[tab]++;
+    updateBadge(tab);
+  }
+
+  function updateBadge(tab) {
+    const badge = $(`badge-${tab}`);
+    if (!badge) return;
+    if (badges[tab] > 0) {
+      badge.textContent = badges[tab];
+      badge.classList.add('visible');
+    } else {
+      badge.classList.remove('visible');
+    }
+  }
+
+  /* ================================================================
+     MODE SYNC — keep header select and sidebar select in sync
+     ================================================================ */
+  function setMode(mode) {
+    currentMode = mode;
+    headerModeSelect.value  = mode;
+    sidebarModeSelect.value = mode;
+
+    /* Sync mobile chips */
+    document.querySelectorAll('.mobile-mode-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.mode === mode);
+    });
+  }
+
+  headerModeSelect.addEventListener('change', () => setMode(headerModeSelect.value));
+  sidebarModeSelect.addEventListener('change', () => setMode(sidebarModeSelect.value));
+
+  /* Mobile mode chips */
+  document.querySelectorAll('.mobile-mode-chip').forEach(chip => {
+    chip.addEventListener('click', () => setMode(chip.dataset.mode));
+  });
+
+  /* ================================================================
+     SEARCH ONLINE TOGGLE
+     ================================================================ */
+  searchOnlineBtn.addEventListener('click', () => {
+    searchOnline = !searchOnline;
+    searchOnlineBtn.classList.toggle('on', searchOnline);
+    searchOnlineBtn.textContent = searchOnline ? '🔍 Search Online: ON' : '🔍 Search Online';
+  });
+
+  /* ================================================================
+     HISTORY MANAGEMENT
+     ================================================================ */
+  function loadHistory(tab) {
+    try {
+      return JSON.parse(localStorage.getItem(HISTORY_KEYS[tab]) || '[]');
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveHistory(tab, query) {
+    let hist = loadHistory(tab);
+    /* Remove duplicate if present, then prepend */
+    hist = hist.filter(h => h !== query);
+    hist.unshift(query);
+    if (hist.length > MAX_HISTORY) hist = hist.slice(0, MAX_HISTORY);
+    localStorage.setItem(HISTORY_KEYS[tab], JSON.stringify(hist));
+  }
+
+  function renderHistoryBar(tab) {
+    const bar = { legal: legalHistoryBar, python: pythonHistoryBar, gemini: geminiHistoryBar }[tab];
+    const textarea = { legal: legalInput, python: pythonInput, gemini: geminiInput }[tab];
+    if (!bar) return;
+
+    bar.innerHTML = '';
+    const hist = loadHistory(tab);
+    hist.forEach(query => {
+      const chip = document.createElement('button');
+      chip.className = 'history-chip';
+      chip.textContent = query.length > 40 ? query.slice(0, 40) + '…' : query;
+      chip.title = query;
+      chip.addEventListener('click', () => {
+        textarea.value = query;
+        autoResize(textarea);
+        textarea.focus();
+      });
+      bar.appendChild(chip);
+    });
+  }
+
+  /* Render all history bars on load */
+  ['legal', 'python', 'gemini'].forEach(renderHistoryBar);
+
+  /* ================================================================
+     TEXTAREA AUTO-RESIZE
+     ================================================================ */
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+
+  [legalInput, pythonInput, geminiInput].forEach(ta => {
+    ta.addEventListener('input', () => autoResize(ta));
+  });
+
+  /* ================================================================
+     CARD CREATION HELPERS
+     ================================================================ */
+
+  /**
+   * Format a response body — detect ALL-CAPS section headings
+   * (e.g. "ISSUE:", "RULE:", "ANALYSIS:") and wrap them.
+   */
+  function formatBody(text) {
+    if (!text) return '';
+    /* Escape HTML first to prevent XSS */
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    /* Detect section headings — lines that are ALL CAPS or Title Case ending with colon */
+    const headingRegex = /^([A-Z][A-Z\s\-\/]{2,}[A-Z]:?)$/gm;
+    return escaped.replace(headingRegex, '<span class="section-heading">$1</span>');
+  }
+
+  function nowTimestamp() {
+    return new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /**
+   * Create a skeleton loading card.
+   */
+  function makeSkeletonCard() {
+    const card = document.createElement('div');
+    card.className = 'skeleton-card';
+    card.innerHTML = `
+      <div class="skeleton-line" style="width:30%"></div>
+      <div class="skeleton-line" style="width:70%"></div>
+      <div class="skeleton-line" style="width:90%"></div>
+      <div class="skeleton-line" style="width:80%"></div>
+    `;
+    return card;
+  }
+
+  /**
+   * Create a response card element.
+   * @param {object} opts - { pillLabel, pillClass, query, body, timestamp }
+   */
+  function makeCard(opts) {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const meta = document.createElement('div');
+    meta.className = 'card-meta';
+
+    const pill = document.createElement('span');
+    pill.className = `mode-pill ${opts.pillClass || 'legal'}`;
+    pill.textContent = opts.pillLabel || 'LEGAL';
+    meta.appendChild(pill);
+
+    const ts = document.createElement('span');
+    ts.className = 'card-timestamp';
+    ts.textContent = opts.timestamp || nowTimestamp();
+    meta.appendChild(ts);
+
+    card.appendChild(meta);
+
+    if (opts.query) {
+      const q = document.createElement('div');
+      q.className = 'card-query';
+      q.textContent = opts.query;
+      card.appendChild(q);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'card-body';
+    body.innerHTML = formatBody(opts.body || '');
+    card.appendChild(body);
+
+    return card;
+  }
+
+  /**
+   * Create an error card.
+   */
+  function makeErrorCard(message) {
+    const card = document.createElement('div');
+    card.className = 'card error-card';
+
+    const meta = document.createElement('div');
+    meta.className = 'card-meta';
+    const pill = document.createElement('span');
+    pill.className = 'mode-pill error';
+    pill.textContent = 'ERROR';
+    meta.appendChild(pill);
+
+    const ts = document.createElement('span');
+    ts.className = 'card-timestamp';
+    ts.textContent = nowTimestamp();
+    meta.appendChild(ts);
+
+    const body = document.createElement('div');
+    body.className = 'card-body';
+    body.textContent = message;
+
+    card.appendChild(meta);
+    card.appendChild(body);
+    return card;
+  }
+
+  /**
+   * Append a card to a response area and auto-scroll to bottom.
+   */
+  function appendCard(area, card) {
+    area.appendChild(card);
+    area.scrollTop = area.scrollHeight;
+  }
+
+  /* ================================================================
+     SOURCES — update sidebar + right panel
+     ================================================================ */
+  function updateSources(sources) {
+    const sidebarEl = $('sidebar-sources');
+    const rightEl   = rightSources;
+
+    if (!sources || sources.length === 0) {
+      sidebarEl.innerHTML = '<div class="source-item" style="color:var(--text-faint);font-size:12px;">No sources.</div>';
+      rightEl.innerHTML   = '<div class="right-empty">No sources cited.</div>';
+      return;
+    }
+
+    sidebarEl.innerHTML = '';
+    rightEl.innerHTML   = '';
+
+    sources.forEach(src => {
+      const si = document.createElement('div');
+      si.className = 'source-item';
+      si.textContent = src;
+      sidebarEl.appendChild(si);
+
+      const ri = document.createElement('div');
+      ri.className = 'right-source-item';
+      ri.textContent = src;
+      rightEl.appendChild(ri);
+    });
+  }
+
+  /* ================================================================
+     NOTIFICATION POP-UP
+     ================================================================ */
+  let notifDismissTimeout = null;
+
+  function showNotification(title, body, isError) {
+    if (notifDismissTimeout) {
+      clearTimeout(notifDismissTimeout);
+    }
+
+    notifTitle.textContent = title;
+    notifBody.textContent  = body;
+    notifEl.classList.toggle('error-notif', !!isError);
+    notifEl.classList.add('show');
+
+    /* Auto-dismiss after 6 seconds */
+    notifDismissTimeout = setTimeout(hideNotification, 6000);
+  }
+
+  function hideNotification() {
+    notifEl.classList.remove('show');
+    notifDismissTimeout = null;
+  }
+
+  notifClose.addEventListener('click', hideNotification);
+
+  /* ================================================================
+     RESEARCH BACKGROUND POLLING
+     ================================================================ */
+  function stopResearchPoll() {
+    if (researchPollId) {
+      clearInterval(researchPollId);
+      researchPollId = null;
+    }
+    researchSpinner.classList.remove('visible');
+  }
+
+  async function startResearchJob(query) {
+    /* Fire POST /research/background */
+    let jobId;
+    try {
+      const res = await fetch(`${API_BASE}/research/background`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      const data = await res.json();
+      jobId = data.job_id;
+    } catch (err) {
+      /* Background research failed silently — main query already displayed */
+      return;
+    }
+
+    if (!jobId) return;
+
+    /* Show spinner */
+    researchSpinner.classList.add('visible');
+
+    /* Poll every 3 seconds */
+    researchPollId = setInterval(async () => {
+      try {
+        const res  = await fetch(`${API_BASE}/research/status/${jobId}`);
+        const data = await res.json();
+
+        if (data.status === 'complete') {
+          stopResearchPoll();
+          const fileCount = Array.isArray(data.files) ? data.files.length : 0;
+          showNotification(
+            'Background research complete',
+            `${fileCount} new file${fileCount !== 1 ? 's' : ''} downloaded. Re-run your query for enriched results.`
+          );
+          /* Increment badge on Legal AI tab if not currently viewing it */
+          if (activeTab !== 'legal') {
+            incrementBadge('legal');
+          }
+        } else if (data.status === 'failed') {
+          stopResearchPoll();
+          showNotification(
+            'Background research failed',
+            'Check your internet connection.',
+            true
+          );
+        }
+        /* Otherwise still 'running' — continue polling */
+      } catch (err) {
+        stopResearchPoll();
+      }
+    }, POLL_INTERVAL);
+  }
+
+  /* ================================================================
+     LEGAL AI — send query
+     ================================================================ */
+  async function sendLegalQuery() {
+    const query = legalInput.value.trim();
+    if (!query) return;
+
+    /* Save to history and refresh chips */
+    saveHistory('legal', query);
+    renderHistoryBar('legal');
+
+    /* Clear input */
+    legalInput.value = '';
+    autoResize(legalInput);
+
+    /* Insert skeleton card */
+    const skeleton = makeSkeletonCard();
+    appendCard(legalResponses, skeleton);
+
+    legalSend.disabled = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, mode: currentMode })
+      });
+
+      const data = await res.json();
+
+      /* Remove skeleton */
+      skeleton.remove();
+
+      const card = makeCard({
+        pillLabel: data.mode || currentMode,
+        pillClass: 'legal',
+        query,
+        body: data.response || '(No response)',
+        timestamp: data.timestamp || nowTimestamp()
+      });
+
+      appendCard(legalResponses, card);
+
+      /* Update sources */
+      if (data.sources) updateSources(data.sources);
+
+    } catch (err) {
+      skeleton.remove();
+      appendCard(legalResponses, makeErrorCard(
+        'Backend offline — start the server with: python api.py'
+      ));
+    }
+
+    legalSend.disabled = false;
+
+    /* If Search Online is on, fire background research as well */
+    if (searchOnline) {
+      startResearchJob(query);
+    }
+  }
+
+  legalSend.addEventListener('click', sendLegalQuery);
+  legalInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      sendLegalQuery();
+    }
+  });
+
+  /* ================================================================
+     PYTHON AGENT — send command
+     ================================================================ */
+  async function sendAgentCommand() {
+    const command = pythonInput.value.trim();
+    if (!command) return;
+
+    saveHistory('python', command);
+    renderHistoryBar('python');
+
+    pythonInput.value = '';
+    autoResize(pythonInput);
+
+    const skeleton = makeSkeletonCard();
+    appendCard(pythonResponses, skeleton);
+
+    pythonSend.disabled = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command })
+      });
+
+      const data = await res.json();
+      skeleton.remove();
+
+      const card = makeCard({
+        pillLabel: 'AGENT',
+        pillClass: 'agent',
+        query: command,
+        body: data.response || '(No response)',
+        timestamp: data.timestamp || nowTimestamp()
+      });
+
+      appendCard(pythonResponses, card);
+
+    } catch (err) {
+      skeleton.remove();
+      appendCard(pythonResponses, makeErrorCard(
+        'Backend offline — start the server with: python api.py'
+      ));
+    }
+
+    pythonSend.disabled = false;
+  }
+
+  pythonSend.addEventListener('click', sendAgentCommand);
+  pythonInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      sendAgentCommand();
+    }
+  });
+
+  /* ================================================================
+     GEMINI AGENT — send message
+     ================================================================ */
+  async function sendGeminiMessage() {
+    const message = geminiInput.value.trim();
+    if (!message) return;
+
+    saveHistory('gemini', message);
+    renderHistoryBar('gemini');
+
+    geminiInput.value = '';
+    autoResize(geminiInput);
+
+    const skeleton = makeSkeletonCard();
+    appendCard(geminiResponses, skeleton);
+
+    geminiSend.disabled = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/gemini`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message })
+      });
+
+      const data = await res.json();
+      skeleton.remove();
+
+      /* Handle GEMINI_API_KEY error clearly */
+      if (!res.ok && data.error && data.error.includes('GEMINI_API_KEY')) {
+        const errCard = makeErrorCard(data.error);
+        appendCard(geminiResponses, errCard);
+        geminiSend.disabled = false;
+        return;
+      }
+
+      const card = makeCard({
+        pillLabel: 'GEMINI',
+        pillClass: 'gemini',
+        query: message,
+        body: data.response || '(No response)',
+        timestamp: data.timestamp || nowTimestamp()
+      });
+
+      appendCard(geminiResponses, card);
+
+    } catch (err) {
+      skeleton.remove();
+      appendCard(geminiResponses, makeErrorCard(
+        'Backend offline — start the server with: python api.py'
+      ));
+    }
+
+    geminiSend.disabled = false;
+  }
+
+  geminiSend.addEventListener('click', sendGeminiMessage);
+  geminiInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      sendGeminiMessage();
+    }
+  });
+
+  /* ================================================================
+     SIDEBAR COMMAND CHIPS — paste into relevant input
+     ================================================================ */
+  document.querySelectorAll('.cmd-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const cmd = chip.dataset.cmd;
+      if (sidebarPython.contains(chip)) {
+        pythonInput.value = cmd;
+        autoResize(pythonInput);
+        pythonInput.focus();
+      } else if (sidebarGemini.contains(chip)) {
+        geminiInput.value = cmd;
+        autoResize(geminiInput);
+        geminiInput.focus();
+      }
+    });
+  });
+
+  /* ================================================================
+     FETCH PROJECT FILES (Python Agent right panel)
+     ================================================================ */
+  async function fetchProjectFiles() {
+    rightFiles.innerHTML = '<div class="right-empty">Loading&hellip;</div>';
+
+    try {
+      /* Use the /agent POST endpoint with the "list files" command */
+      const res  = await fetch(`${API_BASE}/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'list files' })
+      });
+      const data = await res.json();
+
+      /* Response is a plain-text list of .py filenames */
+      if (data.response && typeof data.response === 'string') {
+        const lines = data.response
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => l.endsWith('.py'));
+
+        if (lines.length > 0) {
+          rightFiles.innerHTML = '';
+          lines.forEach(fname => {
+            const item = document.createElement('div');
+            item.className = 'file-item';
+            item.innerHTML = `<span class="file-icon">PY</span><span>${fname}</span>`;
+            rightFiles.appendChild(item);
+          });
+          return;
+        }
+      }
+      showStaticFileList();
+    } catch (err) {
+      showStaticFileList();
+    }
+  }
+
+  function showStaticFileList() {
+    const fallback = [
+      'api.py', 'ingest.py', 'legal_faiss.py', 'legal_distiller.py',
+      'intent_router.py', 'reasoning_engine.py', 'app.py', 'legal_assistant.py'
+    ];
+    rightFiles.innerHTML = '';
+    fallback.forEach(fname => {
+      const item = document.createElement('div');
+      item.className = 'file-item';
+      item.innerHTML = `<span class="file-icon">PY</span><span>${fname}</span>`;
+      rightFiles.appendChild(item);
+    });
+  }
+
+  /* ================================================================
+     CHECK GEMINI HEALTH (Gemini Agent right panel)
+     ================================================================ */
+  async function checkGeminiHealth() {
+    geminiKeyStatus.textContent = 'Checking…';
+    geminiKeyStatus.className   = 'status-info';
+
+    try {
+      const res  = await fetch(`${API_BASE}/health`);
+      const data = await res.json();
+
+      if (data.gemini_key === true || data.gemini_key === 'ok') {
+        geminiKeyStatus.textContent = 'OK';
+        geminiKeyStatus.className   = 'status-ok';
+      } else {
+        geminiKeyStatus.textContent = 'Missing';
+        geminiKeyStatus.className   = 'status-bad';
+      }
+    } catch (err) {
+      geminiKeyStatus.textContent = 'Offline';
+      geminiKeyStatus.className   = 'status-bad';
+    }
+  }
+
+  /* ================================================================
+     INITIALISATION
+     ================================================================ */
+  function init() {
+    /* Set initial tab to Legal AI (already set via HTML classes) */
+    switchTab('legal');
+
+    /* Initialise Search Online button label */
+    searchOnlineBtn.textContent = '🔍 Search Online';
+  }
+
+  init();
+
+})();
+</script>
+</body>
+</html>
