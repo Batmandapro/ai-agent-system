@@ -1,88 +1,71 @@
+import re
+
+# ── INTENT ROUTER ─────────────────────────────────────────────────────────────
+# Routes user queries to one of 7 modes:
+#   irac         — full IRAC legal analysis
+#   case_summary — summarise a named case
+#   synthesis    — compare / reconcile multiple cases
+#   sentencing   — sentencing precedents and ranges
+#   elements     — elements of an offence
+#   procedure    — criminal procedure and process
+#   drafting     — draft legal documents / submissions
+
 def route(query: str) -> str:
-    """
-    Analyses the query and returns the appropriate reasoning mode.
+    q = query.lower().strip()
 
-    Modes:
-    - case_summary    : User wants facts/holdings of a specific case
-    - synthesis       : User wants comparison or reconciliation across cases
-    - sentencing      : User wants sentencing analysis or benchmarks
-    - elements        : User wants the legal elements of an offence
-    - procedure       : User wants procedural/evidential guidance
-    - drafting        : User wants help drafting submissions or mitigation
-    - definition      : User wants a legal definition or explanation
-    - irac            : Default — apply law to facts in IRAC structure
-    """
-
-    q = query.lower()
-
-    # ── CASE SUMMARY ────────────────────────────────────────────────────────
+    # ── CASE SUMMARY ──────────────────────────────────────────────────────────
     if any(x in q for x in [
-        "summarise case", "summarize case",
-        "facts of", "holding of", "case of",
-        "what happened in", "decision in",
-        "ratio of", "ratio decidendi",
-        "obiter in", "obiter dictum"
+        "summarise", "summarize", "summary of",
+        "facts of", "holding of", "decision in",
+        "what happened in", "case of", "tell me about"
     ]):
         return "case_summary"
 
-    # ── SYNTHESIS / COMPARISON ───────────────────────────────────────────────
+    # ── SYNTHESIS ─────────────────────────────────────────────────────────────
     if any(x in q for x in [
         "compare", "distinguish", "vs", "versus",
-        "conflict", "reconcile", "difference between",
-        "how does", "contrast", "similarities",
-        "consistent with", "inconsistent with"
+        "conflict between", "reconcile", "difference between",
+        "consistent with", "inconsistent with", "how does"
     ]):
         return "synthesis"
 
-    # ── SENTENCING ───────────────────────────────────────────────────────────
+    # ── SENTENCING ────────────────────────────────────────────────────────────
     if any(x in q for x in [
-        "sentence", "sentencing", "benchmark",
-        "starting point", "imprisonment",
-        "fine", "caning", "disqualification",
-        "mitigating", "aggravating", "tariff",
-        "prevailing sentence", "what is the punishment",
-        "how much jail", "how many strokes"
+        "sentence", "sentencing", "imprisonment", "fine",
+        "custodial", "tariff", "starting point", "benchmark",
+        "how much jail", "how long", "penalty", "punishment",
+        "mandatory minimum", "caning", "strokes"
     ]):
         return "sentencing"
 
-    # ── ELEMENTS OF OFFENCE ──────────────────────────────────────────────────
+    # ── ELEMENTS OF OFFENCE ───────────────────────────────────────────────────
     if any(x in q for x in [
-        "elements of", "ingredients of",
-        "what must be proven", "what must the prosecution prove",
-        "actus reus", "mens rea",
-        "constitute", "definition of the offence",
-        "what is needed to establish", "establish liability"
+        "elements of", "ingredients of", "constitute",
+        "what makes", "actus reus", "mens rea",
+        "guilty of", "liable for", "offence of",
+        "what is needed", "requirements for"
     ]):
         return "elements"
 
-    # ── PROCEDURE / EVIDENCE ─────────────────────────────────────────────────
+    # ── PROCEDURE ─────────────────────────────────────────────────────────────
     if any(x in q for x in [
-        "procedure", "procedural", "evidence",
-        "admissible", "admissibility", "burden of proof",
-        "standard of proof", "beyond reasonable doubt",
-        "hearsay", "confession", "voir dire",
-        "prosecution must", "defence must",
-        "how to apply", "how do i file", "what is the process"
+        "procedure", "process", "steps", "how to",
+        "application", "file", "filing", "court",
+        "magistrate", "district court", "high court",
+        "criminal procedure code", "cpc", "arrest",
+        "bail", "charge", "plead", "plea", "trial",
+        "appeal", "revision", "mention"
     ]):
         return "procedure"
 
-    # ── DRAFTING ─────────────────────────────────────────────────────────────
+    # ── DRAFTING ──────────────────────────────────────────────────────────────
     if any(x in q for x in [
-        "draft", "write", "prepare",
-        "mitigation plea", "plea in mitigation",
-        "submission", "submissions",
-        "letter", "skeletal arguments",
-        "help me argue", "how should i frame"
+        "draft", "write", "prepare", "letter",
+        "submission", "mitigation", "plea in mitigation",
+        "written representation", "skeletal", "argument",
+        "memorial", "document"
     ]):
         return "drafting"
 
-    # ── DEFINITION / EXPLANATION ─────────────────────────────────────────────
-    if any(x in q for x in [
-        "what is", "what are", "define",
-        "explain", "meaning of", "definition of",
-        "what does", "what do you mean"
-    ]):
-        return "definition"
-
-    # ── DEFAULT: IRAC ────────────────────────────────────────────────────────
+    # ── DEFAULT: IRAC ─────────────────────────────────────────────────────────
     return "irac"

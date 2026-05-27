@@ -1,0 +1,14 @@
+
+storage/default__vector_store.json
+data/cases_db.json
+storage/docstore.json
+data/*.json
+storage/*.json
+
+data/
+storage/
+
+poppler-26.02.0/
+
+__pycache__/
+*.pyc

@@ -1,27 +1,17 @@
-import os
 import json
+import os
+import numpy as np
 import requests
-import math
 
-# ── CONFIG ──────────────────────────────────────────────────────────────────
-DB_PATH     = "data/cases_db.json"
+# ── CONFIG ────────────────────────────────────────────────────────────────────
 OLLAMA_URL  = "http://localhost:11434/api/embeddings"
 EMBED_MODEL = "nomic-embed-text"
-TOP_K       = 5  # number of results to return per query
+DB_PATH     = "data/cases_db.json"
 
-# ── HELPERS ─────────────────────────────────────────────────────────────────
-def _load_db():
-    if os.path.exists(DB_PATH):
-        with open(DB_PATH, "r") as f:
-            return json.load(f)
-    return []
+# ── HELPERS ───────────────────────────────────────────────────────────────────
 
-def _save_db(db):
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with open(DB_PATH, "w") as f:
-        json.dump(db, f, indent=2)
-
-def _embed(text):
+def embed(text):
+    """Embed text using nomic-embed-text via Ollama."""
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -30,98 +20,89 @@ def _embed(text):
         )
         resp.raise_for_status()
         return resp.json().get("embedding")
-    except Exception as e:
-        print(f"[FAISS] Embed error: {e}")
+    except Exception:
         return None
 
-def _cosine_similarity(a, b):
-    dot    = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
+def cosine_similarity(a, b):
+    """Compute cosine similarity between two vectors."""
+    a = np.array(a, dtype=np.float32)
+    b = np.array(b, dtype=np.float32)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
     if norm_a == 0 or norm_b == 0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
-# ── PUBLIC API ───────────────────────────────────────────────────────────────
-def add(source, chunk, vector, folder=""):
-    """Add a single chunk+vector to the database."""
-    db = _load_db()
-    db.append({
-        "source": source,
-        "folder": folder,
-        "chunk":  chunk,
-        "vector": vector
-    })
-    _save_db(db)
+# ── MAIN CLASS ────────────────────────────────────────────────────────────────
 
-def search(query, top_k=TOP_K):
-    """
-    Embed the query and return the top_k most similar chunks.
+class LegalFAISS:
+    def __init__(self, path=DB_PATH):
+        self.path = path
+        self.chunks = self._load()
 
-    Returns a list of dicts:
-    [
-        {
-            "source":     "filename.pdf",
-            "folder":     "data/cases",
-            "chunk":      "...text...",
-            "score":      0.91
-        },
-        ...
-    ]
-    """
-    db = _load_db()
-    if not db:
-        print("[FAISS] Database is empty — run ingest.py first.")
-        return []
+    # ── LOAD / SAVE ───────────────────────────────────────────────────────────
 
-    query_vector = _embed(query)
-    if query_vector is None:
-        print("[FAISS] Could not embed query — is Ollama running?")
-        return []
+    def _load(self):
+        if not os.path.exists(self.path):
+            return []
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Handle both list format and dict format
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                return data.get("chunks", [])
+            return []
+        except Exception:
+            return []
 
-    scored = []
-    for entry in db:
-        vector = entry.get("vector")
-        if not vector:
-            continue
-        score = _cosine_similarity(query_vector, vector)
-        scored.append({
-            "source": entry.get("source", "unknown"),
-            "folder": entry.get("folder", ""),
-            "chunk":  entry.get("chunk", ""),
-            "score":  round(score, 4)
+    def _save(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.chunks, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, self.path)
+
+    # ── CORE API ──────────────────────────────────────────────────────────────
+
+    def add(self, text, source_type, meta):
+        """Embed and store a chunk."""
+        vector = embed(text)
+        if vector is None:
+            return False
+        self.chunks.append({
+            "text":        text,
+            "source_type": source_type,
+            "meta":        meta,
+            "vector":      vector
         })
+        self._save()
+        return True
 
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:top_k]
+    def search(self, query, top_k=6):
+        """Return top_k chunks most similar to query using cosine similarity."""
+        q_vec = embed(query)
+        if q_vec is None:
+            return []
 
-def stats():
-    """Print a quick summary of the database."""
-    db = _load_db()
-    if not db:
-        print("[FAISS] Database is empty.")
-        return
+        results = []
+        for c in self.chunks:
+            vec = c.get("vector")
+            if not vec:
+                continue
+            score = cosine_similarity(q_vec, vec)
+            results.append({
+                "text":        c.get("text", ""),
+                "meta":        c.get("meta", {}),
+                "source_type": c.get("source_type", ""),
+                "source":      c.get("source", c.get("meta", {}).get("source", "")),
+                "score":       score
+            })
 
-    sources = {}
-    for entry in db:
-        src = entry.get("source", "unknown")
-        sources[src] = sources.get(src, 0) + 1
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
 
-    print(f"[FAISS] Total vectors : {len(db)}")
-    print(f"[FAISS] Unique files  : {len(sources)}")
-    for src, count in sorted(sources.items()):
-        print(f"  {src} — {count} chunks")
-
-if __name__ == "__main__":
-    # Quick test — run python legal_faiss.py to verify retrieval is working
-    print("Running retrieval test...\n")
-    results = search("sentencing for drug trafficking")
-    if results:
-        for i, r in enumerate(results, 1):
-            print(f"Result {i}")
-            print(f"  Source : {r['source']}")
-            print(f"  Score  : {r['score']}")
-            print(f"  Text   : {r['chunk'][:200]}...")
-            print()
-    else:
-        print("No results returned.")
+    def count(self):
+        """Return total number of stored chunks."""
+        return len(self.chunks)

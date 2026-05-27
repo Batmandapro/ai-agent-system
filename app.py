@@ -1,280 +1,191 @@
-import re
-from intent_router import route
+import os
+from legal_faiss import LegalFAISS
 from legal_distiller import distil
+from intent_router import route
 from reasoning_engine import reason
-from formatter import format_response, format_error, format_no_results
+from formatter import format_response, format_no_results, format_error
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────
-BANNER = """
-============================================================
-  Legal AI — Singapore Criminal Law Assistant
-  Type your query and press Enter.
-  Commands:
-    exit / quit   — Exit
-    stats         — Show database statistics
-    memory        — Show memory log
-    rules         — Show writing style rules
-============================================================
-"""
+# ── TOOL IMPORTS ──────────────────────────────────────────────────────────────
+try:
+    from statute_lookup_tool import lookup_statute
+    STATUTE_TOOL = True
+except ImportError:
+    STATUTE_TOOL = False
 
-# ── TOOL DETECTION ────────────────────────────────────────────────────────────
+try:
+    from treatment_analyzer import analyse_treatment
+    TREATMENT_TOOL = True
+except ImportError:
+    TREATMENT_TOOL = False
 
-# Acts and abbreviations to watch for in queries
-STATUTE_TRIGGERS = {
-    "mda":           ("MDA", None),
-    "misuse of drugs": ("MDA", None),
-    "penal code":    ("Penal Code", None),
-    " pc ":          ("Penal Code", None),
-    "cpc":           ("CPC", None),
-    "criminal procedure": ("CPC", None),
-    "evidence act":  ("Evidence Act", None),
-    "arms offences": ("Arms Offences Act", None),
-    "women's charter": ("Women's Charter", None),
-    "efma":          ("EFMA", None),
-    "computer misuse": ("Computer Misuse Act", None),
-    "pca":           ("PCA", None),
-    "corruption":    ("PCA", None),
-}
+try:
+    from research_agent import research
+    RESEARCH_TOOL = True
+except ImportError:
+    RESEARCH_TOOL = False
 
-# Regex to detect section references e.g. "s 5", "s5", "section 5", "s 5A", "s 5(1)"
-SECTION_PATTERN = re.compile(
-    r'\b(?:s(?:ection)?\.?\s*)(\d+[A-Z]?(?:\(\d+\))?(?:\([a-z]\))?)',
-    re.IGNORECASE
-)
+# ── INIT ──────────────────────────────────────────────────────────────────────
+rag = LegalFAISS()
 
-def _detect_statutes(query: str) -> list:
-    """
-    Scan the query for statute references and section numbers.
-    Returns a list of dicts: [{"act": "MDA", "section": "5"}, ...]
-    """
-    query_lower = query.lower()
-    found_acts  = []
+# ── AUTO TOOL SELECTION ───────────────────────────────────────────────────────
 
-    for trigger, (act_name, _) in STATUTE_TRIGGERS.items():
-        if trigger in query_lower:
-            # Find section number if present
-            sections = SECTION_PATTERN.findall(query)
-            if sections:
-                for sec in sections:
-                    found_acts.append({"act": act_name, "section": sec})
-            else:
-                found_acts.append({"act": act_name, "section": None})
-
-    # Deduplicate
-    seen = set()
-    unique = []
-    for item in found_acts:
-        key = (item["act"], item["section"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-
-    return unique
-
-def _detect_treatment_request(query: str) -> str:
-    """
-    Detect if the query asks about how a case has been treated.
-    Returns the target case name if detected, else empty string.
-    """
-    query_lower = query.lower()
-    triggers    = [
-        "treatment of", "how has", "subsequent history",
-        "been followed", "been distinguished", "been overruled",
-        "cases citing", "cases that cite", "how is", "treatment"
+def detect_statute_ref(query):
+    statutes = [
+        "penal code", "pc", "mda", "misuse of drugs",
+        "cpc", "criminal procedure code", "evidence act",
+        "mla", "money laundering", "corruption",
+        "pca", "prevention of corruption",
+        "arms offences", "arms act",
+        "computer misuse", "cma"
     ]
-    if any(t in query_lower for t in triggers):
-        # Try to extract a case name — look for capitalised words or citation pattern
-        match = re.search(r'[A-Z][a-z]+(?: [A-Z][a-z]+){1,4}(?:\s*\[\d{4}\])?', query)
-        if match:
-            return match.group(0).strip()
-    return ""
+    q = query.lower()
+    return any(s in q for s in statutes)
 
-def _detect_research_request(query: str) -> bool:
-    """Detect if the query asks for active online research."""
-    triggers = [
-        "research", "find cases on", "look up cases",
-        "search for cases", "find me cases", "what cases are there"
+def detect_treatment_query(query):
+    keywords = [
+        "treatment of", "treated in", "cited in",
+        "followed in", "distinguished in", "overruled",
+        "positive treatment", "negative treatment",
+        "how has", "subsequent cases"
     ]
-    return any(t in query.lower() for t in triggers)
+    q = query.lower()
+    return any(k in q for k in keywords)
 
-# ── TOOL RUNNERS ──────────────────────────────────────────────────────────────
+def detect_research_query(query):
+    keywords = [
+        "find cases", "search for", "look up",
+        "are there any cases", "what cases",
+        "recent cases", "latest cases",
+        "commonlii", "elitigation"
+    ]
+    q = query.lower()
+    return any(k in q for k in keywords)
 
-def _run_statute_lookup(statute_refs: list) -> str:
-    """Run statute lookups and return formatted results as context."""
-    try:
-        from statute_lookup_tool import lookup_section
-        results = []
-        for ref in statute_refs:
-            result = lookup_section(ref["act"], ref["section"])
-            if result["found"]:
-                sec_label = f" s {ref['section']}" if ref["section"] else ""
-                results.append(
-                    f"[STATUTE] {ref['act']}{sec_label} ({result['cap']}):\n{result['text']}"
-                )
-        return "\n\n".join(results)
-    except Exception as e:
-        return ""
+# ── MEMORY HELPERS ────────────────────────────────────────────────────────────
 
-def _run_treatment_analysis(target_case: str) -> str:
-    """Run treatment analysis and return formatted report."""
-    try:
-        from treatment_analyzer import analyze_treatment, format_treatment_report
-        report = analyze_treatment(target_case)
-        return format_treatment_report(report)
-    except Exception as e:
-        return ""
+def load_chat_history():
+    path = "data/chats.json"
+    if os.path.exists(path):
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
 
-def _run_online_research(query: str, mode: str) -> dict:
-    """Trigger the research agent for active online research."""
-    try:
-        from research_agent import research
-        print("[AUTO] Online research triggered — searching free sources...")
-        return {"research_output": research(query, use_online=True, use_lawnet=False)}
-    except Exception as e:
-        return {}
+def save_chat_history(history):
+    import json
+    os.makedirs("data", exist_ok=True)
+    with open("data/chats.json", "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
 
-# ── CORE PIPELINE ─────────────────────────────────────────────────────────────
-
-def run_query(query: str) -> str:
-    """
-    Full auto-tool pipeline:
-
-    1. Route intent
-    2. Auto-detect which tools are needed
-    3. Run tools automatically
-    4. Retrieve and distil local case law
-    5. Combine all context (statute text + case law + tool outputs)
-    6. Reason over combined context
-    7. Format and return
-    """
-
-    mode = route(query)
-
-    # ── Auto Tool Detection ───────────────────────────────────────────────────
-    statute_refs     = _detect_statutes(query)
-    treatment_target = _detect_treatment_request(query)
-    research_needed  = _detect_research_request(query)
-
-    # ── Run Tools Automatically ───────────────────────────────────────────────
-    supplementary_context = ""
-    appended_output       = ""
-
-    # Tool 1 — Statute lookup
-    if statute_refs:
-        print(f"[AUTO] Statute reference detected — looking up {[r['act'] for r in statute_refs]}...")
-        statute_text = _run_statute_lookup(statute_refs)
-        if statute_text:
-            supplementary_context += f"\n\n{statute_text}"
-            print(f"[AUTO] Statute text retrieved.")
-
-    # Tool 2 — Treatment analysis
-    if treatment_target:
-        print(f"[AUTO] Treatment query detected — analysing '{treatment_target}'...")
-        treatment_output = _run_treatment_analysis(treatment_target)
-        if treatment_output:
-            appended_output += treatment_output
-            print(f"[AUTO] Treatment analysis complete.")
-
-    # Tool 3 — Online research (asks for confirmation first)
-    if research_needed:
-        confirm = input(f"[AUTO] Research query detected. Search online sources? (y/n): ").strip().lower()
-        if confirm in ("y", "yes"):
-            research_result = _run_online_research(query, mode)
-            if research_result.get("research_output"):
-                return research_result["research_output"]
-
-    # ── Local Retrieval ───────────────────────────────────────────────────────
-    distilled = distil(query, mode)
-
-    # Inject supplementary statute context into chunks
-    if supplementary_context:
-        distilled["raw_chunks"].insert(0, {
-            "source": "Singapore Statutes Online (AGC)",
-            "chunk":  supplementary_context.strip()
-        })
-        distilled["sources"].insert(0, "Singapore Statutes Online (AGC)")
-        distilled["chunk_count"] += 1
-
-    if distilled["chunk_count"] == 0:
-        return format_no_results(query)
-
-    # ── Reasoning ─────────────────────────────────────────────────────────────
-    raw_answer = reason(
-        query=query,
-        context_chunks=distilled["raw_chunks"],
-        mode=mode
-    )
-
-    # ── Formatting ────────────────────────────────────────────────────────────
-    response = format_response(
-        raw=raw_answer,
-        mode=mode,
-        sources=distilled["sources"],
-        query=query
-    )
-
-    # Append treatment analysis if triggered
-    if appended_output:
-        response += appended_output
-
-    return response
-
-# ── COMMANDS ──────────────────────────────────────────────────────────────────
-
-def handle_stats():
-    from legal_faiss import stats
-    stats()
-
-def handle_memory():
-    try:
-        from style_learner import review_memory
-        review_memory()
-    except Exception:
-        print("  Memory log not yet set up. Run: python style_learner.py bootstrap")
-
-def handle_rules():
-    try:
-        from style_learner import review_rules
-        review_rules()
-    except Exception:
-        print("  Writing rules not yet set up. Run: python style_learner.py bootstrap")
-
-# ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+# ── MAIN CHAT LOOP ────────────────────────────────────────────────────────────
 
 def chat():
-    print(BANNER)
+    print("\n" + "=" * 55)
+    print("  Legal AI — Singapore Criminal Law Assistant")
+    print("  Type 'exit' to quit | 'history' to review chat")
+    print("=" * 55 + "\n")
+
+    history = load_chat_history()
 
     while True:
         try:
             query = input("You: ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\nExiting. Goodbye.")
+            print("\n[Exiting]")
             break
 
         if not query:
             continue
 
-        if query.lower() in ("exit", "quit", "q"):
-            print("Exiting. Goodbye.")
+        if query.lower() == "exit":
+            print("[Session ended]")
             break
 
-        if query.lower() == "stats":
-            handle_stats()
+        if query.lower() == "history":
+            if not history:
+                print("[No chat history yet]\n")
+            else:
+                for h in history[-5:]:
+                    print(f"\nYou: {h['query']}")
+                    print(f"AI:  {h['response'][:300]}...")
             continue
 
-        if query.lower() == "memory":
-            handle_memory()
+        # ── ROUTE ─────────────────────────────────────────────────────────────
+        mode = route(query)
+        print(f"\n[Mode: {mode.upper()}]")
+
+        # ── AUTO TOOL: STATUTE LOOKUP ──────────────────────────────────────────
+        if STATUTE_TOOL and detect_statute_ref(query):
+            print("[Tool: Statute Lookup]")
+            try:
+                statute_result = lookup_statute(query)
+                if statute_result:
+                    print("\n── Statute ──────────────────────────────────────")
+                    print(statute_result)
+                    print("─────────────────────────────────────────────────\n")
+            except Exception as e:
+                print(f"[Statute lookup failed: {e}]")
+
+        # ── AUTO TOOL: TREATMENT ANALYSIS ─────────────────────────────────────
+        if TREATMENT_TOOL and detect_treatment_query(query):
+            print("[Tool: Treatment Analyser]")
+            try:
+                treatment_result = analyse_treatment(query)
+                if treatment_result:
+                    print("\n── Treatment Analysis ───────────────────────────")
+                    print(treatment_result)
+                    print("─────────────────────────────────────────────────\n")
+            except Exception as e:
+                print(f"[Treatment analysis failed: {e}]")
+
+        # ── AUTO TOOL: RESEARCH AGENT (confirms before running) ───────────────
+        if RESEARCH_TOOL and detect_research_query(query):
+            print("[Tool: Research Agent — this will search external sources]")
+            confirm = input("Proceed with external search? (y/n): ").strip().lower()
+            if confirm == "y":
+                try:
+                    research_result = research(query)
+                    if research_result:
+                        print("\n── Research Results ─────────────────────────────")
+                        print(research_result)
+                        print("─────────────────────────────────────────────────\n")
+                except Exception as e:
+                    print(f"[Research agent failed: {e}]")
+
+        # ── RETRIEVAL ─────────────────────────────────────────────────────────
+        raw_chunks = rag.search(query, top_k=8)
+        chunks     = distil(query, raw_chunks, top_k=6)
+
+        if not chunks:
+            print(format_no_results(query))
             continue
 
-        if query.lower() == "rules":
-            handle_rules()
-            continue
+        # ── SOURCES ───────────────────────────────────────────────────────────
+        sources = list(dict.fromkeys(
+            c.get("source") or c.get("meta", {}).get("source", "Unknown")
+            for c in chunks
+        ))
 
+        # ── REASONING ─────────────────────────────────────────────────────────
         try:
-            response = run_query(query)
-            print(response)
+            response = reason(query, chunks, mode=mode)
         except Exception as e:
-            print(format_error(f"Unexpected error: {e}"))
+            print(format_error(str(e)))
+            continue
+
+        # ── DEBUG — remove once satisfied with output ─────────────────────────
+        print("\n[DEBUG RAW RESPONSE]")
+        print(response)
+        print("[END DEBUG]\n")
+
+        # ── FORMAT + DISPLAY ──────────────────────────────────────────────────
+        formatted = format_response(response, mode=mode, sources=sources, query=query)
+        print(formatted)
+
+        # ── SAVE TO HISTORY ───────────────────────────────────────────────────
+        history.append({"query": query, "response": response})
+        save_chat_history(history)
+
 
 if __name__ == "__main__":
     chat()
