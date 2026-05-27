@@ -1,0 +1,32 @@
+import streamlit as st
+from agent import app
+
+st.set_page_config(page_title="My AI Agent", layout="centered")
+
+st.title("🧠 My Personal AI Agent")
+
+# -----------------------------
+# MODE SELECTOR (DROPDOWN)
+# -----------------------------
+mode = st.selectbox("Select reasoning mode:", ["fast", "deep"])
+
+# -----------------------------
+# USER INPUT
+# -----------------------------
+question = st.text_area("Ask your question:")
+
+# -----------------------------
+# RUN BUTTON
+# -----------------------------
+if st.button("Run"):
+    if not question.strip():
+        st.warning("Please enter a question.")
+    else:
+        with st.spinner("Thinking..."):
+            result = app.invoke({
+                "question": question,
+                "mode": mode
+            })
+
+        st.markdown("### Answer")
+        st.write(result["answer"])

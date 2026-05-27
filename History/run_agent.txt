@@ -1,0 +1,9 @@
+from agent import app
+
+result = app.invoke({
+    "question": "Why do legal systems rely on precedent?",
+    "mode": "fast"
+})
+
+print("\n--- ANSWER ---\n")
+print(result["answer"])

@@ -1,0 +1,90 @@
+{
+  "ecb7135d6fb32effb32695c461e3d4b0": {
+    "file": "ASR [2019] 1 SLR 0941.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 491,
+    "embed_ok": 491,
+    "embed_fail": 0
+  },
+  "9e077a168f64a749dc88b3d935d1a036": {
+    "file": "Balakrishnan S.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 261,
+    "embed_ok": 261,
+    "embed_fail": 0
+  },
+  "ba8834746ab2a6e994390fc47e5dfa2d": {
+    "file": "Chan Lie Sian.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 158,
+    "embed_ok": 158,
+    "embed_fail": 0
+  },
+  "455745cd4e3fbcb180b9286f70dc7a6e": {
+    "file": "Govindasamy Nallaiah.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 238,
+    "embed_ok": 238,
+    "embed_fail": 0
+  },
+  "9d98b5e137f6b927c3db01942fdd705b": {
+    "file": "Khoo Kwee Hock Leslie.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 389,
+    "embed_ok": 389,
+    "embed_fail": 0
+  },
+  "7c4f1b22fd5cea4ab249d0e818c56e60": {
+    "file": "Kong Hoo [2019] 1 SLR 1131.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 409,
+    "embed_ok": 409,
+    "embed_fail": 0
+  },
+  "6c07f415720604e7c7080d9e1cc64c94": {
+    "file": "Low Kok Heng [2007] 4 SLR(R) 0183.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 264,
+    "embed_ok": 264,
+    "embed_fail": 0
+  },
+  "580a0aab2e4b483f575a88560acc83eb": {
+    "file": "Mageswaran.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 187,
+    "embed_ok": 187,
+    "embed_fail": 0
+  },
+  "456b7fb2433f5f5cb31cd1d90aeafe5a": {
+    "file": "Nam Hong v Kori [2016] 4 SLR 0604.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 166,
+    "embed_ok": 166,
+    "embed_fail": 0
+  },
+  "b938597253a5f73b7da2e1abe1ad3f15": {
+    "file": "Tee Tean Siong.pdf",
+    "folder": "data/cases",
+    "method": "TEXT",
+    "chunks": 26,
+    "embed_ok": 26,
+    "embed_fail": 0
+  },
+  "039c8715792dee5c44fbe8404b45b56d": {
+    "file": "Chan WC, No Punishment Without Fault.pdf",
+    "folder": "data/notes",
+    "method": "TEXT",
+    "chunks": 207,
+    "embed_ok": 207,
+    "embed_fail": 0
+  }
+}

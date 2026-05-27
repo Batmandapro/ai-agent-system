@@ -1,0 +1,124 @@
+import json
+
+
+class LegalFAISS:
+    def __init__(self):
+        self.case_path = "data/cases_db.json"
+        self.notes_path = "data/notes_db.json"
+
+    # =========================
+    # LOAD DATA
+    # =========================
+    def _load(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
+
+    # =========================
+    # SAVE DATA
+    # =========================
+    def _save(self, path, data):
+        tmp_path = path + ".tmp"
+
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+        import os
+        os.replace(tmp_path, path)
+
+    # =========================
+    # AUTHORITY SCORING ENGINE (NEW CORE)
+    # =========================
+    def _score_authority(self, text, metadata):
+        score = 1
+
+        source = metadata.get("source", "").lower()
+        text_l = text.lower()
+
+        # -------------------------
+        # COURT HIERARCHY SIGNALS
+        # -------------------------
+        if "court of appeal" in text_l or "sgca" in source:
+            score += 5
+
+        if "high court" in text_l or "sghc" in source:
+            score += 3
+
+        if "slr(r)" in source:
+            score += 2
+
+        # -------------------------
+        # CASE LAW SIGNAL BOOST
+        # -------------------------
+        if "[" in text and "]" in text:
+            score += 1
+
+        # -------------------------
+        # NEGATIVE SIGNALS (LOW VALUE TEXT)
+        # -------------------------
+        if len(text) < 200:
+            score -= 1
+
+        return score
+
+    # =========================
+    # ADD CHUNK
+    # =========================
+    def add(self, chunk, source_type, metadata):
+        if source_type == "case":
+            path = self.case_path
+        else:
+            path = self.notes_path
+
+        data = self._load(path)
+
+        data.append({
+            "text": chunk,
+            "metadata": metadata
+        })
+
+        self._save(path, data)
+
+    # =========================
+    # SEARCH (NOW WITH RANKING)
+    # =========================
+    def search(self, query, top_k=5):
+        all_cases = self._load(self.case_path)
+        all_notes = self._load(self.notes_path)
+
+        combined = all_cases + all_notes
+
+        results = []
+
+        for item in combined:
+            text = item["text"]
+
+            # simple keyword match (your current baseline)
+            if query.lower() in text.lower():
+                score = self._score_authority(text, item["metadata"])
+
+                results.append({
+                    "text": text,
+                    "metadata": item["metadata"],
+                    "weight": score
+                })
+
+        # fallback if nothing matches strictly
+        if not results:
+            for item in combined[:top_k]:
+                score = self._score_authority(item["text"], item["metadata"])
+
+                results.append({
+                    "text": item["text"],
+                    "metadata": item["metadata"],
+                    "weight": score
+                })
+
+        # =========================
+        # SORT BY AUTHORITY SCORE
+        # =========================
+        results = sorted(results, key=lambda x: x["weight"], reverse=True)
+
+        return results[:top_k]

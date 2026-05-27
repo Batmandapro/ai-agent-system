@@ -1,0 +1,64 @@
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader,
+    StorageContext,
+    load_index_from_storage,
+    Settings
+)
+
+from llama_index.core.node_parser import SimpleNodeParser
+from llama_index.embeddings.ollama import OllamaEmbedding
+from llama_index.llms.ollama import Ollama
+import os
+
+# -----------------------------
+# CONFIG: LOCAL MODELS
+# -----------------------------
+embed_model = OllamaEmbedding(model_name="nomic-embed-text")
+
+llm = Ollama(
+    model="llama3.1",
+    request_timeout=120.0
+)
+
+Settings.llm = llm
+Settings.embed_model = embed_model
+
+# -----------------------------
+# STORAGE PATH
+# -----------------------------
+PERSIST_DIR = "./storage"
+
+# -----------------------------
+# LOAD OR BUILD INDEX
+# -----------------------------
+if os.path.exists(PERSIST_DIR):
+    # FAST PATH: load existing index
+    storage_context = StorageContext.from_defaults(
+        persist_dir=PERSIST_DIR
+    )
+    index = load_index_from_storage(storage_context)
+
+else:
+    # FIRST RUN: build index from documents
+    docs = SimpleDirectoryReader("docs").load_data()
+
+    parser = SimpleNodeParser.from_defaults(
+        chunk_size=512,
+        chunk_overlap=50
+    )
+
+    nodes = parser.get_nodes_from_documents(docs)
+
+    index = VectorStoreIndex(nodes)
+
+    # persist to disk for future fast loads
+    index.storage_context.persist(persist_dir=PERSIST_DIR)
+
+# -----------------------------
+# QUERY ENGINE (TUNED FOR SPEED)
+# -----------------------------
+query_engine = index.as_query_engine(
+    similarity_top_k=3,
+    response_mode="compact"
+)

@@ -1,0 +1,175 @@
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, Literal
+from llm import llm
+from index import query_engine
+
+
+# -----------------------------
+# STATE
+# -----------------------------
+class State(TypedDict):
+    question: str
+    mode: Literal["fast", "deep"]
+    context: str
+    draft: str
+    critique: str
+    answer: str
+
+
+# -----------------------------
+# RETRIEVAL (COMMON)
+# -----------------------------
+def retrieve(state):
+    response = query_engine.query(state["question"])
+    return {"context": str(response)}
+
+
+# -----------------------------
+# FAST PATH (single-pass reasoning)
+# -----------------------------
+def fast_reason(state):
+    prompt = f"""
+You are a precise and grounded assistant.
+
+Rules:
+- Use ONLY the context
+- Be concise
+- No speculation beyond context
+- If context is insufficient, say so
+
+Context:
+{state['context']}
+
+Question:
+{state['question']}
+
+Answer clearly and directly:
+"""
+
+    response = llm.invoke(prompt)
+    return {"answer": response.content}
+
+
+# -----------------------------
+# DEEP PATH - STEP 1 (DRAFT)
+# -----------------------------
+def deep_draft(state):
+    prompt = f"""
+You are an expert analyst.
+
+Write a structured answer using ONLY the context.
+
+Context:
+{state['context']}
+
+Question:
+{state['question']}
+
+Provide:
+1. Answer
+2. Reasoning
+3. Key points
+"""
+
+    response = llm.invoke(prompt)
+    return {"draft": response.content}
+
+
+# -----------------------------
+# DEEP PATH - STEP 2 (CRITIQUE)
+# -----------------------------
+def deep_critique(state):
+    prompt = f"""
+You are a strict evaluator.
+
+Review this answer for:
+- missing logic
+- weak reasoning
+- overgeneralisation
+- unsupported claims
+
+Context:
+{state['context']}
+
+Draft:
+{state['draft']}
+
+Return improvements needed:
+"""
+
+    response = llm.invoke(prompt)
+    return {"critique": response.content}
+
+
+# -----------------------------
+# DEEP PATH - STEP 3 (FINAL)
+# -----------------------------
+def deep_final(state):
+    prompt = f"""
+You are a senior legal/academic editor.
+
+Improve the draft using critique.
+
+Rules:
+- Stay grounded in context
+- Do NOT add unsupported facts
+- Improve clarity and depth
+
+Context:
+{state['context']}
+
+Draft:
+{state['draft']}
+
+Critique:
+{state['critique']}
+
+Final Answer:
+"""
+
+    response = llm.invoke(prompt)
+    return {"answer": response.content}
+
+
+# -----------------------------
+# ROUTER (FAST vs DEEP)
+# -----------------------------
+def router(state):
+    return state["mode"]
+
+
+# -----------------------------
+# GRAPH
+# -----------------------------
+graph = StateGraph(State)
+
+graph.add_node("retrieve", retrieve)
+
+graph.add_node("fast_reason", fast_reason)
+
+graph.add_node("deep_draft", deep_draft)
+graph.add_node("deep_critique", deep_critique)
+graph.add_node("deep_final", deep_final)
+
+graph.set_entry_point("retrieve")
+
+
+# routing logic
+graph.add_conditional_edges(
+    "retrieve",
+    router,
+    {
+        "fast": "fast_reason",
+        "deep": "deep_draft"
+    }
+)
+
+# fast path ends immediately
+graph.add_edge("fast_reason", END)
+
+# deep path chain
+graph.add_edge("deep_draft", "deep_critique")
+graph.add_edge("deep_critique", "deep_final")
+graph.add_edge("deep_final", END)
+
+app = graph.compile()

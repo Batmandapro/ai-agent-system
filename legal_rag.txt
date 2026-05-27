@@ -1,0 +1,91 @@
+import os
+import json
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+class LegalRAG:
+    def __init__(self):
+        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        os.makedirs("data", exist_ok=True)
+
+        self.case_path = "data/cases_db.json"
+        self.notes_path = "data/notes_db.json"
+
+        for path in [self.case_path, self.notes_path]:
+            if not os.path.exists(path):
+                with open(path, "w") as f:
+                    json.dump([], f)
+
+    # -----------------------------
+    # SAFE LOAD
+    # -----------------------------
+    def _load(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"[WARNING] Corrupted DB detected → resetting {path}")
+            return []
+
+    # -----------------------------
+    # SAFE SAVE (ATOMIC STYLE)
+    # -----------------------------
+    def _save(self, path, data):
+        tmp_path = path + ".tmp"
+
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        os.replace(tmp_path, path)
+
+    # -----------------------------
+    # ADD ENTRY
+    # -----------------------------
+    def add(self, text, source_type, metadata=None):
+        embedding = self.model.encode(text).tolist()
+
+        entry = {
+            "text": text,
+            "embedding": embedding,
+            "metadata": metadata or {}
+        }
+
+        if source_type == "case":
+            data = self._load(self.case_path)
+            data.append(entry)
+            self._save(self.case_path, data)
+
+        elif source_type == "notes":
+            data = self._load(self.notes_path)
+            data.append(entry)
+            self._save(self.notes_path, data)
+
+    # -----------------------------
+    # SEARCH
+    # -----------------------------
+    def search(self, query, source_type, top_k=5):
+        if source_type == "case":
+            data = self._load(self.case_path)
+        else:
+            data = self._load(self.notes_path)
+
+        if not data:
+            return []
+
+        query_emb = self.model.encode(query)
+
+        def cosine(a, b):
+            a = np.array(a)
+            b = np.array(b)
+            return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+        scored = []
+
+        for item in data:
+            score = cosine(query_emb, item["embedding"])
+            scored.append((score, item))
+
+        scored.sort(reverse=True, key=lambda x: x[0])
+
+        return [item for _, item in scored[:top_k]]
