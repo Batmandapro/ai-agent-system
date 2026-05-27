@@ -1,6 +1,6 @@
 import os
 from legal_faiss import LegalFAISS
-from legal_distiller import distil
+from legal_distiller import distil, extract_case_name
 from intent_router import route
 from reasoning_engine import reason
 from formatter import format_response, format_no_results, format_error
@@ -81,8 +81,9 @@ def save_chat_history(history):
 
 def chat():
     print("\n" + "=" * 55)
-    print("  Legal AI — Singapore Criminal Law Assistant")
+    print("  Legal AI — Singapore Law Assistant")
     print("  Type 'exit' to quit | 'history' to review chat")
+    print("  Type 'sources' to list all ingested cases")
     print("=" * 55 + "\n")
 
     history = load_chat_history()
@@ -108,6 +109,17 @@ def chat():
                 for h in history[-5:]:
                     print(f"\nYou: {h['query']}")
                     print(f"AI:  {h['response'][:300]}...")
+            continue
+
+        if query.lower() == "sources":
+            sources = rag.list_sources()
+            if sources:
+                print(f"\n[{len(sources)} sources in database]")
+                for s in sources:
+                    print(f"  {s}")
+                print()
+            else:
+                print("[No sources ingested yet — run ingest.py first]\n")
             continue
 
         # ── ROUTE ─────────────────────────────────────────────────────────────
@@ -138,7 +150,7 @@ def chat():
             except Exception as e:
                 print(f"[Treatment analysis failed: {e}]")
 
-        # ── AUTO TOOL: RESEARCH AGENT (confirms before running) ───────────────
+        # ── AUTO TOOL: RESEARCH AGENT ─────────────────────────────────────────
         if RESEARCH_TOOL and detect_research_query(query):
             print("[Tool: Research Agent — this will search external sources]")
             confirm = input("Proceed with external search? (y/n): ").strip().lower()
@@ -152,9 +164,18 @@ def chat():
                 except Exception as e:
                     print(f"[Research agent failed: {e}]")
 
-        # ── RETRIEVAL ─────────────────────────────────────────────────────────
-        raw_chunks = rag.search(query, top_k=8)
-        chunks     = distil(query, raw_chunks, top_k=6)
+        # ── RETRIEVAL — mode-aware ─────────────────────────────────────────────
+        if mode == "case_summary":
+            case_name = extract_case_name(query)
+            if case_name:
+                print(f"[Retrieval: case-filtered for '{case_name}']")
+                raw_chunks = rag.search_by_source(query, case_name, top_k=10)
+            else:
+                raw_chunks = rag.search(query, top_k=8)
+        else:
+            raw_chunks = rag.search(query, top_k=8)
+
+        chunks = distil(query, raw_chunks, top_k=6)
 
         if not chunks:
             print(format_no_results(query))
@@ -172,11 +193,6 @@ def chat():
         except Exception as e:
             print(format_error(str(e)))
             continue
-
-        # ── DEBUG — remove once satisfied with output ─────────────────────────
-        print("\n[DEBUG RAW RESPONSE]")
-        print(response)
-        print("[END DEBUG]\n")
 
         # ── FORMAT + DISPLAY ──────────────────────────────────────────────────
         formatted = format_response(response, mode=mode, sources=sources, query=query)

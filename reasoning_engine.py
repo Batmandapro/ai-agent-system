@@ -20,20 +20,27 @@ def build_context(chunks):
         parts.append(f"[{source}]\n{c['text']}")
     return "\n\n".join(parts)
 
-# ── SHARED INSTRUCTION ────────────────────────────────────────────────────────
+# ── SHARED ANTI-MARKDOWN INSTRUCTION ─────────────────────────────────────────
 
 SHARED = (
-    "IMPORTANT: Do NOT use markdown formatting. "
-    "Do NOT use **bold**, *italic*, or # headings. "
-    "Use plain text only. "
-    "Output section headings exactly as shown, ending with a colon, on their own line."
+    "CRITICAL FORMATTING RULES — you must follow these exactly:\n"
+    "1. Do NOT use any markdown formatting whatsoever.\n"
+    "2. Do NOT use **bold** (double asterisks) under any circumstances.\n"
+    "3. Do NOT use *italic* (single asterisks) under any circumstances.\n"
+    "4. Do NOT use # headings (hash symbols) under any circumstances.\n"
+    "5. Do NOT use bullet points with - or * symbols.\n"
+    "6. Use plain text only. Section headings must appear exactly as shown "
+    "in the format below, ending with a colon, on their own line.\n"
+    "7. Write in British English spelling throughout "
+    "(e.g. 'analyse' not 'analyze', 'favour' not 'favor', "
+    "'recognised' not 'recognized').\n"
 )
 
-# ── PROMPT TEMPLATES ─────────────────────────────────────────────────────────
+# ── PROMPT TEMPLATES ──────────────────────────────────────────────────────────
 
 def prompt_irac(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant. Analyse the query using IRAC.
+    return f"""You are a Singapore law assistant. Analyse the query using IRAC.
 Use ONLY the provided context. Do NOT hallucinate cases or statutes.
 Cite sources by name wherever possible.
 {SHARED}{style}
@@ -53,9 +60,16 @@ Conclusion:
 
 def prompt_case_summary(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant. Provide a structured summary of the case referenced in the query.
-Use ONLY the provided context. Do NOT hallucinate.
+    return f"""You are a Singapore law assistant. Provide a structured summary of the case referenced in the query.
+Use ONLY the provided context. Do NOT hallucinate details not present in the context.
 {SHARED}{style}
+
+PARAGRAPH CITATION REQUIREMENT:
+You must identify and cite paragraph numbers from the judgment text wherever they appear in the context.
+Paragraph numbers appear in square brackets, for example [14], [23], [52].
+When stating a holding, ratio, or key finding, cite the paragraph number as follows:
+"The court held at [52] that..." or "As noted at [14], the principle is..."
+If no paragraph numbers are visible in the context, state "paragraph numbers not available in retrieved text".
 
 QUERY:
 {query}
@@ -76,7 +90,7 @@ Relevance:
 
 def prompt_synthesis(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant. Compare and synthesise the cases or principles referenced.
+    return f"""You are a Singapore law assistant. Compare and synthesise the cases or principles referenced.
 Use ONLY the provided context. Do NOT hallucinate.
 {SHARED}{style}
 
@@ -96,10 +110,14 @@ Conclusion:
 
 def prompt_sentencing(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant specialising in sentencing.
+    return f"""You are a Singapore law assistant specialising in sentencing.
 Identify the applicable sentencing framework, benchmarks and relevant precedents.
 Use ONLY the provided context. Do NOT hallucinate.
 {SHARED}{style}
+
+PARAGRAPH CITATION REQUIREMENT:
+When citing a holding, framework, or ratio, cite the paragraph number if visible:
+"The court held at [14] that the starting point is..."
 
 QUERY:
 {query}
@@ -119,7 +137,7 @@ Indicative Sentence:
 
 def prompt_elements(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant. Set out the legal elements required to establish the offence or liability in question.
+    return f"""You are a Singapore law assistant. Set out the legal elements required to establish the offence or liability in question.
 Use ONLY the provided context. Do NOT hallucinate.
 {SHARED}{style}
 
@@ -140,7 +158,7 @@ Key Cases:
 
 def prompt_procedure(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant. Explain the applicable criminal procedure clearly and accurately.
+    return f"""You are a Singapore law assistant. Explain the applicable procedure clearly and accurately.
 Use ONLY the provided context. Do NOT hallucinate.
 {SHARED}{style}
 
@@ -160,7 +178,7 @@ Notes:
 
 def prompt_drafting(query, context, rules):
     style = f"\n\nWriting style instructions:\n{rules}" if rules else ""
-    return f"""You are a Singapore criminal law assistant. Draft the requested legal document or submission.
+    return f"""You are a Singapore law assistant. Draft the requested legal document or submission.
 Use ONLY the provided context for legal propositions. Do NOT hallucinate authorities.
 {SHARED}{style}
 
@@ -186,10 +204,12 @@ PROMPT_MAP = {
 }
 
 def _strip_markdown(text):
-    """Remove markdown bold, italic and heading markers from LLM output."""
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*',     r'\1', text)
-    text = re.sub(r'^#+\s+',        '',    text, flags=re.MULTILINE)
+    """Remove markdown formatting from LLM output as a post-processing safety net."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'\1', text)
+    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\*\s+', '  ', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*', '', text)
     return text.strip()
 
 def reason(query, context_chunks, mode="irac"):

@@ -1,10 +1,57 @@
+import re
 from legal_faiss import LegalFAISS
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-MIN_SCORE       = 0.10  # discard chunks below this cosine similarity score
-MAX_CHUNK_CHARS = 1200  # truncate individual chunks if too long
+MIN_SCORE       = 0.10
+MAX_CHUNK_CHARS = 1200
 
 _rag = LegalFAISS()
+
+# ── CASE NAME EXTRACTION ──────────────────────────────────────────────────────
+
+_CASE_TRIGGER_PHRASES = [
+    "summarise the case of",
+    "summarize the case of",
+    "summary of the case of",
+    "facts of",
+    "holding of",
+    "decision in",
+    "what happened in",
+    "tell me about the case",
+    "case of",
+    "summarise",
+    "summarize",
+]
+
+def extract_case_name(query: str) -> str | None:
+    """
+    Attempt to extract a specific case name from the user query.
+    Returns lowercase string for source-filename matching, or None.
+    """
+    q = query.strip()
+    q_lower = q.lower()
+
+    triggers = sorted(_CASE_TRIGGER_PHRASES, key=len, reverse=True)
+
+    remainder = None
+    for trigger in triggers:
+        if trigger in q_lower:
+            idx = q_lower.index(trigger) + len(trigger)
+            remainder = q[idx:].strip()
+            break
+
+    if remainder is None:
+        return None
+
+    remainder = re.sub(r'^(?:the|a|an)\s+', '', remainder, flags=re.IGNORECASE).strip()
+    remainder = re.sub(r'\[?\d{4}\]?.*$', '', remainder).strip()
+    remainder = remainder.strip(".,;:")
+
+    words = [w for w in remainder.split() if len(w) >= 2]
+    if len(words) < 2:
+        return None
+
+    return remainder.lower()
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
@@ -36,61 +83,10 @@ def _deduplicate(chunks):
 def distil(query: str, raw_chunks: list, top_k: int = 6) -> list:
     """
     Filter, deduplicate and return the most relevant chunks.
-
-    Accepts raw_chunks already retrieved from LegalFAISS.search()
-    so that app.py controls retrieval and distiller controls quality.
-
-    Returns a list of chunk dicts ready for reasoning_engine.
+    Accepts raw_chunks already retrieved from LegalFAISS.
     """
-    # Step 1 — Filter by minimum score
     filtered = [c for c in raw_chunks if c.get("score", 0) >= MIN_SCORE]
-
-    # Step 2 — Deduplicate
-    unique = _deduplicate(filtered)
-
-    # Step 3 — Truncate long chunks
+    unique   = _deduplicate(filtered)
     for c in unique:
         c["text"] = _truncate(c.get("text", ""))
-
-    # Step 4 — Return top_k
     return unique[:top_k]
-
-
-def distil_full(query: str, mode: str = "irac", top_k: int = 6) -> dict:
-    """
-    All-in-one version: retrieves from FAISS, filters, deduplicates.
-    Returns a dict with context string and metadata.
-    Useful for standalone testing.
-    """
-    raw      = _rag.search(query, top_k=top_k * 2)
-    chunks   = distil(query, raw, top_k=top_k)
-    sources  = list(dict.fromkeys(
-        c.get("source") or c.get("meta", {}).get("source", "Unknown")
-        for c in chunks
-    ))
-
-    context_lines = []
-    for i, c in enumerate(chunks, 1):
-        source = c.get("source") or c.get("meta", {}).get("source", "Unknown")
-        score  = round(c.get("score", 0), 3)
-        text   = c.get("text", "")
-        context_lines.append(f"[{i}] SOURCE: {source} (relevance: {score})\n{text}\n")
-
-    return {
-        "query":       query,
-        "mode":        mode,
-        "context":     "\n".join(context_lines),
-        "sources":     sources,
-        "chunk_count": len(chunks),
-        "raw_chunks":  chunks
-    }
-
-
-if __name__ == "__main__":
-    print("Testing legal_distiller...\n")
-    result = distil_full("sentencing for drug trafficking", mode="sentencing")
-    print(f"Query  : {result['query']}")
-    print(f"Mode   : {result['mode']}")
-    print(f"Chunks : {result['chunk_count']}")
-    print(f"Sources: {', '.join(result['sources'])}")
-    print(f"\nContext preview:\n{result['context'][:500]}...")

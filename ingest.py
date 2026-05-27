@@ -3,16 +3,25 @@ import json
 import hashlib
 import requests
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pdfminer.high_level import extract_text
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-SCAN_DIRS   = ["data/cases", "data/statutes", "data/notes"]
+SCAN_DIRS   = [
+    "data/cases",
+    "data/statutes",
+    "data/notes",
+]
+
 LOG_PATH    = "data/ingested_log.json"
 FAISS_PATH  = "data/cases_db.json"
 OLLAMA_URL  = "http://localhost:11434/api/embeddings"
 EMBED_MODEL = "nomic-embed-text"
-CHUNK_SIZE  = 500   # characters per chunk
-CHUNK_STEP  = 400   # step size — overlap = CHUNK_SIZE minus CHUNK_STEP
+
+CHUNK_SIZE  = 1000
+CHUNK_STEP  = 800
+MAX_WORKERS = 4
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
@@ -40,10 +49,14 @@ def load_db():
     return []
 
 def save_db(db):
-    with open(FAISS_PATH, "w") as f:
+    os.makedirs(os.path.dirname(FAISS_PATH), exist_ok=True)
+    tmp = FAISS_PATH + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(db, f, indent=2)
+    os.replace(tmp, FAISS_PATH)
 
 def chunk_text(text):
+    """Split text into overlapping chunks of CHUNK_SIZE with CHUNK_STEP stride."""
     chunks = []
     start  = 0
     while start < len(text):
@@ -54,7 +67,8 @@ def chunk_text(text):
         start += CHUNK_STEP
     return chunks
 
-def embed(text):
+def embed_single(text):
+    """Embed a single chunk via Ollama. Returns vector or None on failure."""
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -66,6 +80,29 @@ def embed(text):
     except Exception:
         return None
 
+def embed_concurrent(chunks, max_workers=MAX_WORKERS):
+    """Embed a list of chunks using a thread pool for concurrency."""
+    results = [None] * len(chunks)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(embed_single, chunk): idx
+            for idx, chunk in enumerate(chunks)
+        }
+        completed = 0
+        total     = len(chunks)
+        for future in as_completed(future_to_idx):
+            idx            = future_to_idx[future]
+            results[idx]   = future.result()
+            completed     += 1
+            bar_done  = int(completed / total * 30)
+            bar_empty = 30 - bar_done
+            bar       = "█" * bar_done + "░" * bar_empty
+            sys.stdout.write(f"\r  [{bar}] {completed}/{total} chunks")
+            sys.stdout.flush()
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return results
+
 def extract_pdf_text(path):
     """Extract text from PDF using pdfminer; fall back to OCR if needed."""
     try:
@@ -74,8 +111,6 @@ def extract_pdf_text(path):
             return text, "TEXT"
     except Exception:
         pass
-
-    # OCR fallback for scanned PDFs
     try:
         import pytesseract
         from pdf2image import convert_from_path
@@ -92,12 +127,26 @@ def extract_pdf_text(path):
         return "", f"FAIL ({e})"
 
 def extract_txt_text(path):
-    """Extract text from plain .txt files (e.g. downloaded from CommonLII or eLitigation)."""
+    """Extract text from plain .txt files."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read(), "TEXT"
     except Exception as e:
         return "", f"FAIL ({e})"
+
+def collect_files(scan_dirs):
+    """Recursively collect all PDF and TXT files from each directory."""
+    collected = []
+    for scan_dir in scan_dirs:
+        os.makedirs(scan_dir, exist_ok=True)
+        for root, dirs, files in os.walk(scan_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for filename in sorted(files):
+                if filename.lower().endswith(".pdf") or filename.lower().endswith(".txt"):
+                    full_path    = os.path.join(root, filename)
+                    display_path = os.path.relpath(full_path)
+                    collected.append((full_path, display_path, filename))
+    return collected
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
@@ -109,95 +158,77 @@ def main():
     skipped   = 0
     failed    = 0
 
-    for scan_dir in SCAN_DIRS:
-        os.makedirs(scan_dir, exist_ok=True)
-        print(f"\n[INGEST] Scanning: {scan_dir}\n")
+    print(f"\n[INGEST] Scanning directories: {SCAN_DIRS}\n")
+    all_files = collect_files(SCAN_DIRS)
 
-        # Accept both PDF and TXT files
-        all_files = [
-            f for f in os.listdir(scan_dir)
-            if f.lower().endswith(".pdf") or f.lower().endswith(".txt")
-        ]
+    if not all_files:
+        print("  (no files found in any scan directory)\n")
+    else:
+        print(f"  Found {len(all_files)} file(s) total\n")
 
-        if not all_files:
-            print("  (no files found)\n")
+    for full_path, display_path, filename in all_files:
+        fhash = file_hash(full_path)
+
+        if fhash in log:
+            print(f"File   : {display_path}")
+            print(f"Status : SKIPPED (already ingested)\n")
+            skipped += 1
             continue
 
-        for filename in sorted(all_files):
-            path  = os.path.join(scan_dir, filename)
-            fhash = file_hash(path)
+        if filename.lower().endswith(".txt"):
+            text, method = extract_txt_text(full_path)
+        else:
+            text, method = extract_pdf_text(full_path)
 
-            if fhash in log:
-                print(f"File   : {filename}")
-                print(f"Status : SKIPPED\n")
-                skipped += 1
-                continue
-
-            # Extract text based on file type
-            if filename.lower().endswith(".txt"):
-                text, method = extract_txt_text(path)
-            else:
-                text, method = extract_pdf_text(path)
-
-            if not text.strip():
-                print(f"File   : {filename}")
-                print(f"Mode   : {method}")
-                print(f"Status : FAILED — no text extracted\n")
-                failed += 1
-                continue
-
-            chunks     = chunk_text(text)
-            total      = len(chunks)
-            embed_ok   = 0
-            embed_fail = 0
-
-            print(f"File   : {filename}")
+        if not text.strip():
+            print(f"File   : {display_path}")
             print(f"Mode   : {method}")
-            print(f"Chunks : {total}")
+            print(f"Status : FAILED — no text extracted\n")
+            failed += 1
+            continue
 
-            for i, chunk in enumerate(chunks):
-                vector = embed(chunk)
-                if vector:
-                    db.append({
-                        "source": filename,
-                        "folder": scan_dir,
-                        "chunk":  chunk,
-                        "vector": vector
-                    })
-                    embed_ok += 1
-                else:
-                    embed_fail += 1
+        chunks = chunk_text(text)
+        total  = len(chunks)
 
-                # Single-line progress bar — overwrites itself
-                bar_done  = int((i + 1) / total * 30)
-                bar_empty = 30 - bar_done
-                bar       = "█" * bar_done + "░" * bar_empty
-                sys.stdout.write(f"\r  [{bar}] {i+1}/{total} chunks")
-                sys.stdout.flush()
+        print(f"File   : {display_path}")
+        print(f"Mode   : {method}")
+        print(f"Chunks : {total}")
 
-            # Move past the progress bar line
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+        vectors    = embed_concurrent(chunks, max_workers=MAX_WORKERS)
+        embed_ok   = 0
+        embed_fail = 0
 
-            if embed_fail == total:
-                print(f"Status : FAILED — all embeds failed (is Ollama running?)\n")
-                failed += 1
-                continue
+        for chunk, vector in zip(chunks, vectors):
+            if vector:
+                db.append({
+                    "source": filename,
+                    "folder": os.path.dirname(full_path),
+                    "text":   chunk,      # NOTE: key is "text" not "chunk"
+                    "vector": vector
+                })
+                embed_ok += 1
+            else:
+                embed_fail += 1
 
-            log[fhash] = {
-                "file":       filename,
-                "folder":     scan_dir,
-                "method":     method,
-                "chunks":     total,
-                "embed_ok":   embed_ok,
-                "embed_fail": embed_fail
-            }
-            save_log(log)
-            save_db(db)
+        if embed_fail == total:
+            print(f"Status : FAILED — all embeds failed (is Ollama running?)\n")
+            failed += 1
+            continue
 
-            status = "COMPLETE" if embed_fail == 0 else f"COMPLETE ({embed_fail} embed errors)"
-            print(f"Status : {status}\n")
-            processed += 1
+        log[fhash] = {
+            "file":       filename,
+            "folder":     os.path.dirname(full_path),
+            "method":     method,
+            "chunks":     total,
+            "embed_ok":   embed_ok,
+            "embed_fail": embed_fail
+        }
+        save_log(log)
+        save_db(db)
+
+        status = "COMPLETE" if embed_fail == 0 else f"COMPLETE ({embed_fail} embed errors)"
+        print(f"Status : {status}\n")
+        processed += 1
 
     print("=" * 40)
     print(f"Processed : {processed}")
@@ -205,6 +236,7 @@ def main():
     print(f"Failed    : {failed}")
     print(f"Vectors   : {len(db)} total in DB")
     print("=" * 40)
+
 
 if __name__ == "__main__":
     main()

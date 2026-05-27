@@ -6,13 +6,18 @@ from llm import llm
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 DB_PATH = "data/cases_db.json"
 
-# Treatment classification keywords
-POSITIVE_KEYWORDS  = ["followed", "applied", "approved", "endorsed", "affirmed",
-                       "adopted", "accepted", "relied on", "consistent with"]
-NEGATIVE_KEYWORDS  = ["overruled", "not followed", "declined to follow", "doubted",
-                       "disapproved", "rejected", "departed from", "inconsistent with"]
-NEUTRAL_KEYWORDS   = ["distinguished", "considered", "noted", "referred to",
-                       "cited", "discussed", "mentioned", "queried"]
+POSITIVE_KEYWORDS = [
+    "followed", "applied", "approved", "endorsed", "affirmed",
+    "adopted", "accepted", "relied on", "consistent with"
+]
+NEGATIVE_KEYWORDS = [
+    "overruled", "not followed", "declined to follow", "doubted",
+    "disapproved", "rejected", "departed from", "inconsistent with"
+]
+NEUTRAL_KEYWORDS = [
+    "distinguished", "considered", "noted", "referred to",
+    "cited", "discussed", "mentioned", "queried"
+]
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
@@ -20,45 +25,32 @@ def _load_db():
     if not os.path.exists(DB_PATH):
         return []
     with open(DB_PATH, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("chunks", [])
+    return []
 
 def _extract_case_name(citation: str) -> str:
-    """
-    Normalise a citation into searchable variants.
-    e.g. 'Low Kok Heng' → ['low kok heng', 'low kok heng [2007]']
-    """
     return citation.strip().lower()
 
 def _find_citing_chunks(target: str, db: list) -> list:
-    """
-    Search all chunks for any that mention the target case.
-    Returns list of dicts with source, chunk text, and raw treatment hint.
-    """
     target_lower = _extract_case_name(target)
-    # Also try just the party name without citation year
     short_name   = re.sub(r'\[.*?\]', '', target_lower).strip()
-
     hits = []
     for entry in db:
-        chunk  = entry.get("chunk", "")
+        # Handle both "chunk" and "text" field names for backward compatibility
+        chunk  = entry.get("text", entry.get("chunk", ""))
         source = entry.get("source", "unknown")
         chunk_lower = chunk.lower()
-
         if target_lower in chunk_lower or short_name in chunk_lower:
-            # Skip if this chunk is FROM the target case itself
             if short_name in source.lower():
                 continue
-            hits.append({
-                "source": source,
-                "chunk":  chunk
-            })
+            hits.append({"source": source, "chunk": chunk})
     return hits
 
 def _classify_treatment(chunk: str) -> str:
-    """
-    Quick keyword-based classification before sending to LLM.
-    Returns 'positive', 'negative', 'neutral', or 'unknown'.
-    """
     chunk_lower = chunk.lower()
     for kw in NEGATIVE_KEYWORDS:
         if kw in chunk_lower:
@@ -72,10 +64,8 @@ def _classify_treatment(chunk: str) -> str:
     return "unknown"
 
 def _llm_classify(target: str, source: str, chunk: str) -> dict:
-    """
-    Use LLM to produce a precise treatment classification and explanation.
-    """
     prompt = f"""You are a Singapore law case citator assistant.
+Do not use any markdown formatting. Do not use bold, italic, or headings. Plain text only.
 
 The following passage is from the case "{source}". It mentions the case "{target}".
 
@@ -83,14 +73,7 @@ Passage:
 {chunk}
 
 Classify how "{source}" treats "{target}" using ONLY one of these labels:
-- FOLLOWED — the later court followed and applied the earlier case
-- APPLIED — the earlier case's principle was applied to the facts
-- APPROVED — the earlier case was expressly approved
-- DISTINGUISHED — the earlier case was distinguished on the facts or law
-- CONSIDERED — the earlier case was merely discussed or noted
-- DOUBTED — the earlier case's correctness was questioned
-- NOT FOLLOWED — the later court declined to follow the earlier case
-- OVERRULED — the earlier case was expressly overruled
+FOLLOWED, APPLIED, APPROVED, DISTINGUISHED, CONSIDERED, DOUBTED, NOT FOLLOWED, OVERRULED
 
 Then provide:
 1. The treatment label (one of the above)
@@ -104,7 +87,6 @@ Paragraph: [number or "not identified"]
 """
     response = llm.invoke(prompt).content.strip()
 
-    # Parse response
     treatment   = "CONSIDERED"
     explanation = ""
     paragraph   = "not identified"
@@ -127,23 +109,10 @@ Paragraph: [number or "not identified"]
 
 # ── PUBLIC API ────────────────────────────────────────────────────────────────
 
-def analyze_treatment(target_case: str) -> dict:
+def analyse_treatment(target_case: str) -> dict:
     """
     Find all cases in the database that cite the target case,
     classify their treatment, and return a structured report.
-
-    Args:
-        target_case: Case name/citation e.g. "PP v Low Kok Heng [2007] 4 SLR(R) 183"
-
-    Returns:
-        {
-            "target":   case name,
-            "positive": [...],
-            "neutral":  [...],
-            "negative": [...],
-            "unknown":  [...],
-            "total":    int
-        }
     """
     db   = _load_db()
     hits = _find_citing_chunks(target_case, db)
@@ -156,10 +125,12 @@ def analyze_treatment(target_case: str) -> dict:
             "negative": [],
             "unknown":  [],
             "total":    0,
-            "message":  "No citing cases found in the current database. Add more cases via ingest.py to improve coverage."
+            "message":  (
+                "No citing cases found in the current database. "
+                "Add more cases via ingest.py to improve coverage."
+            )
         }
 
-    # Deduplicate by source — take the most relevant chunk per source
     seen_sources = {}
     for hit in hits:
         src = hit["source"]
@@ -167,14 +138,10 @@ def analyze_treatment(target_case: str) -> dict:
             seen_sources[src] = hit
 
     unique_hits = list(seen_sources.values())
-
-    # Classify each
     results = {"positive": [], "neutral": [], "negative": [], "unknown": []}
 
     for hit in unique_hits:
-        quick = _classify_treatment(hit["chunk"])
-        classified = _llm_classify(target_case, hit["source"], hit["chunk"])
-
+        classified      = _llm_classify(target_case, hit["source"], hit["chunk"])
         treatment_label = classified["treatment"].upper()
 
         if any(t in treatment_label for t in ["FOLLOWED", "APPLIED", "APPROVED"]):
@@ -197,9 +164,12 @@ def analyze_treatment(target_case: str) -> dict:
         "total":    len(unique_hits)
     }
 
+# Alias for backward compatibility
+analyze_treatment = analyse_treatment
+
+
 def format_treatment_report(report: dict) -> str:
     """Format the treatment analysis as a readable terminal report."""
-
     target = report["target"]
     total  = report["total"]
 
@@ -229,7 +199,7 @@ def format_treatment_report(report: dict) -> str:
         lines.append(f"  [{symbol}] {heading}")
         lines.append("  " + "-" * 56)
         for item in items:
-            lines.append(f"  • {item['source']}")
+            lines.append(f"  {item['source']}")
             lines.append(f"    Treatment : {item['treatment']}")
             lines.append(f"    At para   : {item['paragraph']}")
             lines.append(f"    Note      : {item['explanation']}")
@@ -241,11 +211,7 @@ def format_treatment_report(report: dict) -> str:
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1:
-        target = " ".join(sys.argv[1:])
-    else:
-        target = "Low Kok Heng"
-
+    target = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "Low Kok Heng"
     print(f"\nAnalysing treatment of: {target}")
-    report = analyze_treatment(target)
+    report = analyse_treatment(target)
     print(format_treatment_report(report))
