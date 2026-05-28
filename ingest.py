@@ -1,14 +1,21 @@
 # FILE: ingest.py
-# REPLACES: C:\Users\Admin\Desktop\ai-agent-system\ingest.py
+# LOCATION: C:\Users\Admin\Desktop\ai-agent-system\ingest.py
+# ACTION: Replace entire file
 
 """
 Ingest pipeline for Singapore Legal AI system.
 Scans configured directories for PDF and TXT files, extracts text using
-MarkItDown (primary) or pdfminer (fallback), chunks by paragraph boundaries,
-embeds via Ollama, and saves results atomically to the cases database.
+MarkItDown (primary), pdfminer (secondary fallback), then Tesseract OCR
+(final fallback for scanned image PDFs), chunks by paragraph boundaries,
+embeds via Ollama nomic-embed-text, and saves results atomically to the
+cases database.
 
-Install requirement:
-    pip install "markitdown[pdf]"
+Install requirements:
+    pip install "markitdown[pdf]" pdfminer.six pytesseract pdf2image pillow
+
+Tesseract (Windows):
+    Download and install from https://github.com/UB-Mannheim/tesseract/wiki
+    Default path: C:\\Program Files\\Tesseract-OCR\\tesseract.exe
 """
 
 import hashlib
@@ -16,7 +23,6 @@ import json
 import os
 import re
 import sys
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -39,110 +45,143 @@ OLLAMA_URL  = "http://localhost:11434/api/embeddings"
 EMBED_MODEL = "nomic-embed-text"
 MAX_WORKERS = 4
 
+# Tesseract executable path (Windows default — adjust if installed elsewhere)
+TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# Minimum characters for extracted text to be considered usable
+MIN_TEXT_CHARS = 50
+
 # Chunking parameters
 MIN_CHUNK_CHARS = 200
 MAX_CHUNK_CHARS = 1200
 
 # ---------------------------------------------------------------------------
-# MarkItDown import with graceful fallback to pdfminer
+# Extractor availability flags
 # ---------------------------------------------------------------------------
 
 try:
     from markitdown import MarkItDown
-    _MARKITDOWN_AVAILABLE = True
+    _MARKITDOWN = True
 except ImportError:
-    _MARKITDOWN_AVAILABLE = False
-    print(
-        "WARNING: MarkItDown is not installed. "
-        "Falling back to pdfminer for PDF extraction. "
-        "Run:  pip install \"markitdown[pdf]\"  to enable the primary extractor."
-    )
+    _MARKITDOWN = False
+    print("WARNING: MarkItDown not installed — run: pip install \"markitdown[pdf]\"")
 
-if not _MARKITDOWN_AVAILABLE:
-    try:
-        from pdfminer.high_level import extract_text as _pdfminer_extract
-        _PDFMINER_AVAILABLE = True
-    except ImportError:
-        _PDFMINER_AVAILABLE = False
-        print(
-            "WARNING: pdfminer is also not installed. "
-            "PDF files will be skipped entirely."
-        )
+try:
+    from pdfminer.high_level import extract_text as _pdfminer_extract
+    _PDFMINER = True
+except ImportError:
+    _PDFMINER = False
+
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+    _OCR = True
+except ImportError:
+    _OCR = False
 
 # ---------------------------------------------------------------------------
-# Text extraction
+# Text extraction — three-tier chain
 # ---------------------------------------------------------------------------
 
-def extract_text_from_pdf(file_path: Path) -> str:
+def extract_text_from_pdf(file_path: Path) -> tuple[str, str]:
     """
-    Extract text from a PDF file.
+    Extract text from a PDF using a three-tier fallback chain.
 
-    Primary:  MarkItDown — returns clean Markdown preserving headings,
-              numbered lists and paragraph structure. The raw Markdown is
-              returned as-is so that downstream citation extraction can
-              identify paragraph markers such as [1], [2], [45].
+    Returns a tuple of (text, method) where method is one of:
+        "markitdown"  — MarkItDown extracted usable text
+        "pdfminer"    — pdfminer extracted usable text
+        "ocr"         — Tesseract OCR extracted usable text
+        "failed"      — all extractors returned empty or failed
 
-    Fallback: pdfminer.high_level.extract_text if MarkItDown is unavailable.
-
-    Returns an empty string if neither extractor is available or if
-    extraction fails.
+    The OCR path is only reached when both MarkItDown and pdfminer
+    return fewer than MIN_TEXT_CHARS characters — i.e. scanned image PDFs.
     """
-    if _MARKITDOWN_AVAILABLE:
+
+    # ── Tier 1: MarkItDown ────────────────────────────────────────────────────
+    if _MARKITDOWN:
         try:
-            md = MarkItDown()
+            md   = MarkItDown()
             result = md.convert(str(file_path))
-            # Return the full Markdown text without stripping any markers
-            return result.text_content
+            text   = result.text_content or ""
+            if len(text.strip()) >= MIN_TEXT_CHARS:
+                print(f"  [TEXT] MarkItDown — clean text extracted successfully")
+                return text, "markitdown"
+            else:
+                print(f"  [TEXT] MarkItDown returned too little text — trying pdfminer...")
         except Exception as exc:
-            print(f"  MarkItDown failed for {file_path.name}: {exc}. "
-                  "Attempting pdfminer fallback.")
+            print(f"  [TEXT] MarkItDown failed: {exc} — trying pdfminer...")
 
-    # Fallback path
-    if _PDFMINER_AVAILABLE:
+    # ── Tier 2: pdfminer ─────────────────────────────────────────────────────
+    if _PDFMINER:
         try:
-            return _pdfminer_extract(str(file_path)) or ""
+            text = _pdfminer_extract(str(file_path)) or ""
+            if len(text.strip()) >= MIN_TEXT_CHARS:
+                print(f"  [TEXT] pdfminer — clean text extracted successfully")
+                return text, "pdfminer"
+            else:
+                print(f"  [TEXT] pdfminer returned too little text — activating OCR...")
         except Exception as exc:
-            print(f"  pdfminer failed for {file_path.name}: {exc}.")
-            return ""
+            print(f"  [TEXT] pdfminer failed: {exc} — activating OCR...")
+    else:
+        print(f"  [TEXT] pdfminer not available — activating OCR...")
 
-    print(f"  No PDF extractor available — skipping {file_path.name}.")
-    return ""
+    # ── Tier 3: Tesseract OCR ─────────────────────────────────────────────────
+    if _OCR:
+        print(f"  [OCR] Scanned PDF detected — this may take longer...")
+        try:
+            images = convert_from_path(str(file_path))
+            text   = ""
+            for i, img in enumerate(images):
+                page_text = pytesseract.image_to_string(img)
+                text += page_text
+                print(f"  [OCR] Page {i + 1}/{len(images)} processed")
+            if text.strip():
+                print(f"  [OCR] OCR extraction successful")
+                return text, "ocr"
+            else:
+                print(f"  [OCR] OCR returned empty text — file cannot be ingested")
+                return "", "failed"
+        except Exception as exc:
+            print(f"  [OCR] OCR failed: {exc}")
+            return "", "failed"
+    else:
+        print(
+            f"  [OCR] pytesseract/pdf2image not installed — cannot OCR scanned PDF.\n"
+            f"        Run: pip install pytesseract pdf2image pillow\n"
+            f"        Then install Tesseract from https://github.com/UB-Mannheim/tesseract/wiki"
+        )
+        return "", "failed"
 
 
-def extract_text_from_file(file_path: Path) -> str:
+def extract_text_from_file(file_path: Path) -> tuple[str, str]:
     """
     Dispatch text extraction based on file extension.
-    TXT files are read directly; PDFs use the extractor chain above.
+    Returns (text, method) — method is 'txt' for plain text files.
     """
     suffix = file_path.suffix.lower()
     if suffix == ".txt":
         try:
-            return file_path.read_text(encoding="utf-8", errors="replace")
+            return file_path.read_text(encoding="utf-8", errors="replace"), "txt"
         except Exception as exc:
             print(f"  Could not read {file_path.name}: {exc}")
-            return ""
+            return "", "failed"
     elif suffix == ".pdf":
         return extract_text_from_pdf(file_path)
     else:
-        return ""
+        return "", "failed"
+
 
 # ---------------------------------------------------------------------------
 # Paragraph-boundary chunking
 # ---------------------------------------------------------------------------
 
-# Matches Singapore legal paragraph markers: [1], [12], [123] at line start.
-_PARA_NUM_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
-
-# Sentence boundary: period (or ! or ?) followed by one or more spaces then a
-# capital letter — used when a single paragraph exceeds MAX_CHUNK_CHARS.
+_PARA_NUM_RE      = re.compile(r"^\[(\d+)\]", re.MULTILINE)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 
 def _detect_para_start(text: str) -> int | None:
-    """
-    Return the first Singapore legal paragraph number found in *text*,
-    or None if no such marker is present.
-    """
+    """Return the first Singapore legal paragraph number found, or None."""
     match = _PARA_NUM_RE.search(text)
     if match:
         return int(match.group(1))
@@ -150,34 +189,27 @@ def _detect_para_start(text: str) -> int | None:
 
 
 def _split_long_paragraph(paragraph: str) -> list[str]:
-    """
-    Split a paragraph that exceeds MAX_CHUNK_CHARS at sentence boundaries.
-    Sentences are accumulated until adding the next would exceed the limit;
-    at that point the current accumulation is emitted as a chunk.
-    Any remainder shorter than MIN_CHUNK_CHARS is merged into the last chunk.
-    """
-    sentences = _SENTENCE_SPLIT_RE.split(paragraph)
-    chunks: list[str] = []
-    current_parts: list[str] = []
-    current_len = 0
+    """Split a paragraph exceeding MAX_CHUNK_CHARS at sentence boundaries."""
+    sentences     = _SENTENCE_SPLIT_RE.split(paragraph)
+    chunks: list  = []
+    current_parts = []
+    current_len   = 0
 
     for sentence in sentences:
-        sentence_len = len(sentence)
-        if current_len + sentence_len > MAX_CHUNK_CHARS and current_parts:
+        slen = len(sentence)
+        if current_len + slen > MAX_CHUNK_CHARS and current_parts:
             chunk = " ".join(current_parts).strip()
             if len(chunk) >= MIN_CHUNK_CHARS:
                 chunks.append(chunk)
-                current_parts = []
-                current_len = 0
+            current_parts = []
+            current_len   = 0
         current_parts.append(sentence)
-        current_len += sentence_len + 1  # +1 for the joining space
+        current_len += slen + 1
 
-    # Emit whatever remains.
     if current_parts:
         remainder = " ".join(current_parts).strip()
         if remainder:
             if chunks and len(remainder) < MIN_CHUNK_CHARS:
-                # Merge short remainder into the last chunk.
                 chunks[-1] = (chunks[-1] + " " + remainder).strip()
             else:
                 chunks.append(remainder)
@@ -187,39 +219,29 @@ def _split_long_paragraph(paragraph: str) -> list[str]:
 
 def chunk_text(text: str) -> list[str]:
     """
-    Split text into chunks on paragraph boundaries (blank lines in Markdown).
-
-    Rules:
-    - A paragraph boundary is one or more consecutive blank lines.
-    - Paragraphs shorter than MIN_CHUNK_CHARS are merged with the next
-      paragraph until the combined length meets the minimum or all
-      paragraphs are exhausted.
-    - Paragraphs longer than MAX_CHUNK_CHARS are split at sentence
-      boundaries (see _split_long_paragraph).
-    - The Markdown structure (# headings, [n] markers, numbered lists) is
-      preserved verbatim within each chunk.
+    Split text into chunks on paragraph boundaries (blank lines).
+    Merges short paragraphs and splits overly long ones.
+    Paragraph markers such as [1], [2] are preserved verbatim.
     """
     raw_paragraphs = re.split(r"\n\s*\n", text)
-    paragraphs = [p.strip() for p in raw_paragraphs if p.strip()]
+    paragraphs     = [p.strip() for p in raw_paragraphs if p.strip()]
 
-    merged: list[str] = []
+    merged = []
     buffer = ""
 
     for para in paragraphs:
         if not buffer:
             buffer = para
+        elif len(buffer) < MIN_CHUNK_CHARS:
+            buffer = buffer + "\n\n" + para
         else:
-            combined = buffer + "\n\n" + para
-            if len(buffer) < MIN_CHUNK_CHARS:
-                buffer = combined
-            else:
-                merged.append(buffer)
-                buffer = para
+            merged.append(buffer)
+            buffer = para
 
     if buffer:
         merged.append(buffer)
 
-    final_chunks: list[str] = []
+    final_chunks = []
     for chunk in merged:
         if len(chunk) > MAX_CHUNK_CHARS:
             final_chunks.extend(_split_long_paragraph(chunk))
@@ -228,41 +250,35 @@ def chunk_text(text: str) -> list[str]:
 
     return final_chunks
 
+
 # ---------------------------------------------------------------------------
 # Embedding via Ollama
 # ---------------------------------------------------------------------------
 
 def embed_chunk(chunk_text_str: str) -> list[float]:
-    """
-    Send a text chunk to the local Ollama embedding endpoint and return
-    the embedding vector as a list of floats.
-    Raises requests.RequestException on network or server errors.
-    """
-    payload = {"model": EMBED_MODEL, "prompt": chunk_text_str}
+    """Embed a single text chunk via Ollama nomic-embed-text."""
+    payload  = {"model": EMBED_MODEL, "prompt": chunk_text_str}
     response = requests.post(OLLAMA_URL, json=payload, timeout=60)
     response.raise_for_status()
     return response.json()["embedding"]
 
 
-def embed_with_progress(chunks: list[str], file_name: str) -> list[tuple[str, list[float] | None]]:
+def embed_with_progress(chunks: list, file_name: str) -> list[tuple]:
     """
-    Embed a list of chunks concurrently using a thread pool, displaying a
-    live progress bar in the terminal.
-
-    Returns a list of (chunk_text, vector_or_None) tuples in submission order.
+    Embed all chunks concurrently with a live progress bar.
+    Returns list of (chunk_text, vector_or_None) tuples in original order.
     """
-    total = len(chunks)
-    results: list[tuple[str, list[float] | None]] = [None] * total  # type: ignore
-    completed = 0
+    total   = len(chunks)
+    results = [None] * total
+    done    = 0
 
-    def _render_bar(done: int, total: int) -> None:
-        bar_done  = int(done / total * 30)
-        bar_empty = 30 - bar_done
-        bar       = "█" * bar_done + "░" * bar_empty
-        sys.stdout.write(f"\r  Embedding [{bar}] {done}/{total} chunks")
+    def _bar(d, t):
+        filled = int(d / t * 30)
+        bar    = "█" * filled + "░" * (30 - filled)
+        sys.stdout.write(f"\r  Embedding [{bar}] {d}/{t} chunks")
         sys.stdout.flush()
 
-    _render_bar(0, total)
+    _bar(0, total)
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_idx = {
@@ -270,27 +286,26 @@ def embed_with_progress(chunks: list[str], file_name: str) -> list[tuple[str, li
             for idx, chunk in enumerate(chunks)
         }
         for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
+            idx   = future_to_idx[future]
             chunk = chunks[idx]
             try:
-                vector = future.result()
-                results[idx] = (chunk, vector)
+                results[idx] = (chunk, future.result())
             except Exception as exc:
                 print(f"\n  Embedding failed for a chunk in {file_name}: {exc}")
                 results[idx] = (chunk, None)
-            completed += 1
-            _render_bar(completed, total)
+            done += 1
+            _bar(done, total)
 
     sys.stdout.write("\n")
     sys.stdout.flush()
     return results
+
 
 # ---------------------------------------------------------------------------
 # Hash tracking and atomic saves
 # ---------------------------------------------------------------------------
 
 def md5_of_file(file_path: Path) -> str:
-    """Compute the MD5 digest of a file's contents in 64 KB blocks."""
     hasher = hashlib.md5()
     with open(file_path, "rb") as fh:
         for block in iter(lambda: fh.read(65536), b""):
@@ -299,7 +314,6 @@ def md5_of_file(file_path: Path) -> str:
 
 
 def load_json_file(path: Path, default):
-    """Load a JSON file, returning *default* if the file does not exist."""
     if path.exists():
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
@@ -307,41 +321,29 @@ def load_json_file(path: Path, default):
 
 
 def atomic_save_json(path: Path, data) -> None:
-    """
-    Serialise *data* to JSON and save it atomically by writing to a
-    temporary file then replacing the target path.
-    """
-    tmp_path = path.with_suffix(".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as fh:
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
+    os.replace(tmp, path)
+
 
 # ---------------------------------------------------------------------------
-# Main ingestion logic
+# File collection
 # ---------------------------------------------------------------------------
 
 def collect_files() -> list[Path]:
-    """
-    Walk each directory in SCAN_DIRS and collect all PDF and TXT files.
-    Directories that do not exist are skipped with a warning.
-    """
-    files: list[Path] = []
+    files = []
     for scan_dir in SCAN_DIRS:
         if not scan_dir.exists():
             print(f"WARNING: Scan directory does not exist — skipping: {scan_dir}")
             continue
-        for file_path in sorted(scan_dir.rglob("*")):
-            if file_path.suffix.lower() in (".pdf", ".txt") and file_path.is_file():
-                files.append(file_path)
+        for fp in sorted(scan_dir.rglob("*")):
+            if fp.suffix.lower() in (".pdf", ".txt") and fp.is_file():
+                files.append(fp)
     return files
 
 
 def determine_folder_label(file_path: Path) -> str:
-    """
-    Return a short label identifying which top-level scan directory
-    the file belongs to (e.g. 'cases', 'statutes', 'notes').
-    Falls back to the immediate parent directory name.
-    """
     for scan_dir in SCAN_DIRS:
         try:
             file_path.relative_to(scan_dir)
@@ -351,19 +353,18 @@ def determine_folder_label(file_path: Path) -> str:
     return file_path.parent.name
 
 
+# ---------------------------------------------------------------------------
+# Single-file processing
+# ---------------------------------------------------------------------------
+
 def process_file(
     file_path: Path,
     folder_label: str,
     ingested_log: dict,
-    db_entries: list,
 ) -> tuple[list[dict], str | None]:
     """
     Extract, chunk, and embed all chunks from a single file.
-
-    Returns:
-        (new_entries, file_hash)  — new_entries is a (possibly empty) list of
-        DB records to append; file_hash is the MD5 of the file (or None on
-        extraction failure).
+    Returns (new_entries, file_hash).
     """
     file_hash = md5_of_file(file_path)
 
@@ -371,54 +372,64 @@ def process_file(
         print(f"  Skipping (unchanged): {file_path.name}")
         return [], file_hash
 
-    print(f"\n  Processing: {file_path.name}")
-    raw_text = extract_text_from_file(file_path)
+    print(f"\n{'─' * 50}")
+    print(f"  Processing: {file_path.name}")
+
+    raw_text, method = extract_text_from_file(file_path)
 
     if not raw_text.strip():
-        print(f"  No text extracted from {file_path.name} — skipping.")
+        print(f"  [FAIL] No readable text — skipping {file_path.name}")
         return [], file_hash
 
     chunks = chunk_text(raw_text)
-    print(f"  Chunks: {len(chunks)}")
+    print(f"  Mode    : {method.upper()}")
+    print(f"  Chunks  : {len(chunks)}")
 
-    embedded = embed_with_progress(chunks, file_path.name)
-
-    new_entries: list[dict] = []
-    failed = 0
+    embedded     = embed_with_progress(chunks, file_path.name)
+    new_entries  = []
+    failed_embed = 0
 
     for chunk, vector in embedded:
         if vector is None:
-            failed += 1
+            failed_embed += 1
             continue
-        para_start = _detect_para_start(chunk)
-        entry = {
+        new_entries.append({
             "source":     str(file_path),
             "folder":     folder_label,
-            "text":       chunk,          # Key must remain "text" — do not rename
+            "text":       chunk,
             "vector":     vector,
-            "para_start": para_start,
-        }
-        new_entries.append(entry)
+            "para_start": _detect_para_start(chunk),
+        })
 
-    if failed:
-        print(f"  {failed} chunk(s) failed to embed in {file_path.name}.")
+    if failed_embed:
+        print(f"  {failed_embed} chunk(s) failed to embed.")
 
+    print(f"  Saved   : {len(new_entries)} entries")
     return new_entries, file_hash
 
 
-def main() -> None:
-    print("=== Singapore Legal AI — Ingest Pipeline ===")
-    if _MARKITDOWN_AVAILABLE:
-        print("PDF extractor : MarkItDown (primary)")
-    elif _PDFMINER_AVAILABLE:
-        print("PDF extractor : pdfminer (fallback)")
-    else:
-        print("PDF extractor : NONE — PDF files will be skipped")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
-    # Ensure output directories exist.
+def main() -> None:
+    print("=" * 55)
+    print("  Singapore Legal AI — Ingest Pipeline")
+    print("=" * 55)
+
+    extractors = []
+    if _MARKITDOWN:
+        extractors.append("MarkItDown (primary)")
+    if _PDFMINER:
+        extractors.append("pdfminer (fallback)")
+    if _OCR:
+        extractors.append("Tesseract OCR (scanned PDF fallback)")
+    else:
+        extractors.append("Tesseract OCR: NOT INSTALLED — scanned PDFs will be skipped")
+    print(f"  Extractors : {' → '.join(extractors)}\n")
+
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load existing state.
     ingested_log: dict = load_json_file(LOG_PATH, {})
     db_entries: list   = load_json_file(DB_PATH, [])
 
@@ -427,46 +438,46 @@ def main() -> None:
         print("No PDF or TXT files found in any scan directory.")
         return
 
-    print(f"\nFound {len(files)} file(s) across scan directories.\n")
+    print(f"  Found {len(files)} file(s) across scan directories.\n")
 
-    total_new_entries = 0
-    files_processed   = 0
-    files_skipped     = 0
+    total_new  = 0
+    processed  = 0
+    skipped    = 0
+    failed     = 0
 
     for file_path in files:
         folder_label = determine_folder_label(file_path)
         new_entries, file_hash = process_file(
-            file_path, folder_label, ingested_log, db_entries
+            file_path, folder_label, ingested_log
         )
 
         if new_entries:
             db_entries.extend(new_entries)
             ingested_log[str(file_path)] = file_hash
-            total_new_entries += len(new_entries)
-            files_processed   += 1
-
-            # Save incrementally after each file to minimise data loss if the
-            # process is interrupted.
+            total_new += len(new_entries)
+            processed += 1
             atomic_save_json(DB_PATH, db_entries)
             atomic_save_json(LOG_PATH, ingested_log)
-            print(f"  Saved {len(new_entries)} new entry/entries to database.")
 
-        elif file_hash and ingested_log.get(str(file_path)) == file_hash:
-            files_skipped += 1
+        elif ingested_log.get(str(file_path)) == file_hash:
+            skipped += 1
 
         else:
-            # Extraction produced no text — record the hash so the file is not
-            # re-attempted on every run unless it changes on disk.
+            # No text extracted — record hash so we do not retry on every run
+            failed += 1
             if file_hash:
                 ingested_log[str(file_path)] = file_hash
                 atomic_save_json(LOG_PATH, ingested_log)
 
-    print("\n=== Ingest complete ===")
-    print(f"  Files processed : {files_processed}")
-    print(f"  Files skipped   : {files_skipped} (unchanged)")
-    print(f"  New DB entries  : {total_new_entries}")
-    print(f"  DB total entries: {len(db_entries)}")
-    print(f"  DB path         : {DB_PATH}")
+    print(f"\n{'=' * 55}")
+    print(f"  Ingest complete")
+    print(f"  Processed  : {processed} file(s)")
+    print(f"  Skipped    : {skipped} (unchanged)")
+    print(f"  Failed     : {failed} (no text extracted)")
+    print(f"  New entries: {total_new}")
+    print(f"  DB total   : {len(db_entries)} entries")
+    print(f"  DB path    : {DB_PATH}")
+    print(f"{'=' * 55}\n")
 
 
 if __name__ == "__main__":
