@@ -1,259 +1,171 @@
+# FILE: statute_lookup_tool.py
+# LOCATION: C:\Users\Admin\Desktop\ai-agent-system\statute_lookup_tool.py
+# ACTION: Replace entire file
+
 import re
-import requests
-from urllib.parse import quote
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────
-# Singapore Statutes Online — free, authoritative, no authentication required
-AGC_BASE      = "https://sso.agc.gov.sg"
-AGC_SEARCH    = "https://sso.agc.gov.sg/Browse/Act/Current/All"
-REQUEST_DELAY = 1
-HEADERS       = {
-    "User-Agent": "Mozilla/5.0 (Legal Research Assistant; educational use)"
-}
+# ── KNOWN STATUTES ─────────────────────────────────────────────────────────────
 
-# ── COMMON SINGAPORE STATUTES (fast lookup without needing to search) ─────────
-# Maps common short names and abbreviations to their AGC Act IDs
 KNOWN_STATUTES = {
-    # Criminal Law
-    "penal code":                   "Cap 224",
-    "pc":                           "Cap 224",
-    "criminal procedure code":      "Cap 68",
-    "cpc":                          "Cap 68",
-    "misuse of drugs act":          "Cap 185",
-    "mda":                          "Cap 185",
-    "arms offences act":            "Cap 14",
-    "aoa":                          "Cap 14",
-    "kidnapping act":               "Cap 151",
-    "corruption prevention":        "Cap 241",
-    "pca":                          "Cap 241",
-    "prevention of corruption act": "Cap 241",
-    "internal security act":        "Cap 143",
-    "isa":                          "Cap 143",
-    "vandalism act":                "Cap 341",
-    "women's charter":              "Cap 353",
-    "employment of foreign manpower act": "Cap 91A",
-    "efma":                         "Cap 91A",
-
-    # Evidence & Courts
-    "evidence act":                 "Cap 97",
-    "supreme court of judicature act": "Cap 322",
-    "subordinate courts act":       "Cap 321",
-    "state courts act":             "Cap 321",
-    "legal profession act":         "Cap 161",
-
-    # Regulatory
-    "computer misuse act":          "Cap 50A",
-    "cma":                          "Cap 50A",
-    "customs act":                  "Cap 70",
-    "income tax act":               "Cap 134",
-    "companies act":                "Cap 50",
+    "penal code":                   ("Penal Code",                    "Cap 224"),
+    "pc":                           ("Penal Code",                    "Cap 224"),
+    "misuse of drugs act":          ("Misuse of Drugs Act",           "Cap 185"),
+    "mda":                          ("Misuse of Drugs Act",           "Cap 185"),
+    "criminal procedure code":      ("Criminal Procedure Code",       "Cap 68"),
+    "cpc":                          ("Criminal Procedure Code",       "Cap 68"),
+    "evidence act":                 ("Evidence Act",                  "Cap 97"),
+    "prevention of corruption act": ("Prevention of Corruption Act",  "Cap 241"),
+    "pca":                          ("Prevention of Corruption Act",  "Cap 241"),
+    "arms offences act":            ("Arms Offences Act",             "Cap 14"),
+    "computer misuse act":          ("Computer Misuse Act",           "Cap 50A"),
+    "cma":                          ("Computer Misuse Act",           "Cap 50A"),
+    "money laundering":             ("Corruption, Drug Trafficking and Other Serious Crimes (Confiscation of Benefits) Act", "Cap 65A"),
+    "cdsa":                         ("Corruption, Drug Trafficking and Other Serious Crimes (Confiscation of Benefits) Act", "Cap 65A"),
+    "legal profession act":         ("Legal Profession Act",          "Cap 161"),
+    "companies act":                ("Companies Act",                  "Cap 50"),
+    "employment act":               ("Employment Act",                 "Cap 91"),
+    "income tax act":               ("Income Tax Act",                 "Cap 134"),
+    "bankruptcy act":               ("Bankruptcy Act",                 "Cap 20"),
+    "civil law act":                ("Civil Law Act",                  "Cap 43"),
+    "conveyancing act":             ("Conveyancing and Law of Property Act", "Cap 61"),
+    "land titles act":              ("Land Titles Act",               "Cap 157"),
 }
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+# ── SECTION PATTERN ────────────────────────────────────────────────────────────
 
-def _strip_html(html: str) -> str:
-    """Strip HTML tags and clean whitespace."""
-    text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
-    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&#\d+;', '', text)
-    text = re.sub(r'&[a-z]+;', '', text)
-    text = re.sub(r'\s{3,}', '\n\n', text)
-    return text.strip()
+_SECTION_RE = re.compile(
+    r'\b(?:s(?:ection)?\s*)(\d+[A-Za-z]?(?:\s*\(\s*\d+\s*\))?)',
+    re.IGNORECASE
+)
 
-def _normalise_act_name(name: str) -> str:
-    """Normalise an act name for lookup against KNOWN_STATUTES."""
-    return name.lower().strip().rstrip(".")
+# ── INTERNAL HELPERS ───────────────────────────────────────────────────────────
 
-def _fetch_url(url: str) -> str:
-    """Fetch a URL and return the page text."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        return resp.text
-    except Exception as e:
-        print(f"[STATUTE] Fetch failed: {e}")
-        return ""
+def _normalise_act_name(text: str) -> str:
+    """Lower-case and strip punctuation for lookup key matching."""
+    return re.sub(r'[^a-z0-9 ]', '', text.lower()).strip()
 
-def _extract_section(full_text: str, section_number: str) -> str:
+
+def _detect_act(query: str):
     """
-    Extract a specific section from statute full text.
-    Handles formats like "5", "5A", "5(1)", "5(1)(a)".
+    Return (full_name, cap_number) if the query references a known statute,
+    or (None, None) if no match is found.
     """
-    # Try to find the section heading
-    patterns = [
-        rf'(?:^|\n)\s*{re.escape(section_number)}\s*\.?\s+(.*?)(?=\n\s*\d+[A-Z]?\s*\.|\Z)',
-        rf'Section\s+{re.escape(section_number)}\s*[.\-—]\s*(.*?)(?=Section\s+\d|\Z)',
-    ]
+    normalised = _normalise_act_name(query)
+    for key, value in KNOWN_STATUTES.items():
+        if key in normalised:
+            return value
+    return None, None
 
-    for pattern in patterns:
-        match = re.search(pattern, full_text, re.DOTALL | re.IGNORECASE)
-        if match:
-            text = match.group(0).strip()
-            # Limit to reasonable length
-            if len(text) > 3000:
-                text = text[:3000] + "...[truncated]"
-            return text
 
-    return ""
-
-# ── PUBLIC API ────────────────────────────────────────────────────────────────
-
-def lookup_section(act_name: str, section: str = None) -> dict:
+def _detect_section(query: str) -> str | None:
     """
-    Look up a statute or specific section from Singapore Statutes Online.
+    Extract the first section reference from the query string,
+    e.g. 'section 5(1)' → '5(1)', 's 300' → '300'.
+    Returns None if no section is mentioned.
+    """
+    m = _SECTION_RE.search(query)
+    if m:
+        return m.group(1).strip().replace(" ", "")
+    return None
 
-    Args:
-        act_name: Name or abbreviation of the Act e.g. "MDA", "Penal Code", "CPC"
-        section:  Optional section number e.g. "5", "5A", "300(a)"
 
-    Returns:
-        {
-            "act":      full act name,
-            "cap":      chapter number,
-            "section":  section number or None,
-            "text":     extracted text,
-            "url":      source URL,
-            "found":    bool
-        }
+def format_statute_result(act_name: str, cap: str, section: str | None) -> str:
+    """
+    Format a statute lookup result as a plain-text string suitable for
+    terminal or API response display.
+    """
+    if section:
+        return (
+            f"Statute Reference\n"
+            f"  Act     : {act_name} ({cap})\n"
+            f"  Section : s {section}\n"
+            f"  Note    : Verify the exact text of s {section} against the current "
+            f"Singapore Statutes Online version at https://sso.agc.gov.sg"
+        )
+    return (
+        f"Statute Reference\n"
+        f"  Act  : {act_name} ({cap})\n"
+        f"  Note : Verify the current version at https://sso.agc.gov.sg"
+    )
+
+
+def lookup_section(act_name: str, section: str | None = None) -> str:
+    """
+    Look up a statute by its canonical act name and optional section number.
+    Returns a formatted reference string, or an empty string if the act
+    is not in the known statutes dictionary.
     """
     normalised = _normalise_act_name(act_name)
-    cap        = KNOWN_STATUTES.get(normalised)
-
-    # Try partial match if exact match fails
-    if not cap:
-        for key, value in KNOWN_STATUTES.items():
-            if normalised in key or key in normalised:
-                cap = value
-                break
-
-    if not cap:
-        return {
-            "act":     act_name,
-            "cap":     None,
-            "section": section,
-            "text":    f"Act '{act_name}' not found in known statutes index. Try the full name.",
-            "url":     AGC_SEARCH,
-            "found":   False
-        }
-
-    # Build AGC URL
-    cap_clean = cap.replace(" ", "_").replace("/", "_")
-    url       = f"{AGC_BASE}/Act/{cap_clean}"
-
-    print(f"[STATUTE] Looking up: {act_name} {cap} s {section or '(full act)'}")
-    print(f"[STATUTE] URL: {url}")
-
-    html = _fetch_url(url)
-    if not html:
-        return {
-            "act":     act_name,
-            "cap":     cap,
-            "section": section,
-            "text":    "Could not retrieve statute text from AGC. Check your internet connection.",
-            "url":     url,
-            "found":   False
-        }
-
-    full_text = _strip_html(html)
-
-    # Extract specific section if requested
-    if section:
-        section_text = _extract_section(full_text, section)
-        if not section_text:
-            # Return a meaningful snippet around the section number
-            idx = full_text.find(f" {section} ")
-            if idx > 0:
-                section_text = full_text[max(0, idx-100):idx+1500].strip()
-            else:
-                section_text = f"Section {section} not found in extracted text. Visit {url} directly."
-        text = section_text
-    else:
-        # Return first 3000 chars of the act as a summary
-        text = full_text[:3000] + ("...[truncated — specify a section for full text]" if len(full_text) > 3000 else "")
-
-    return {
-        "act":     act_name,
-        "cap":     cap,
-        "section": section,
-        "text":    text,
-        "url":     url,
-        "found":   True
-    }
+    for key, (full_name, cap) in KNOWN_STATUTES.items():
+        if key in normalised or _normalise_act_name(full_name) == normalised:
+            return format_statute_result(full_name, cap, section)
+    return ""
 
 
-def lookup_multiple(references: list) -> list:
+def lookup_multiple(queries: list) -> list:
     """
-    Look up multiple statute references at once.
-
-    Args:
-        references: List of dicts e.g.
-                    [{"act": "MDA", "section": "5"},
-                     {"act": "Penal Code", "section": "34"}]
-
-    Returns:
-        List of lookup result dicts
+    Run lookup_statute over a list of query strings and return a list
+    of non-empty result strings.
     """
     results = []
-    for ref in references:
-        act     = ref.get("act", "")
-        section = ref.get("section")
-        result  = lookup_section(act, section)
-        results.append(result)
+    for q in queries:
+        result = lookup_statute(q)
+        if result:
+            results.append(result)
     return results
 
 
-def format_statute_result(result: dict) -> str:
-    """Format a lookup result for display."""
-    lines = []
-    lines.append("\n" + "=" * 60)
-    lines.append(f"  Statute Lookup")
-    lines.append("=" * 60)
-
-    if not result["found"]:
-        lines.append(f"\n  Act    : {result['act']}")
-        lines.append(f"  Status : NOT FOUND")
-        lines.append(f"  Note   : {result['text']}")
-        lines.append(f"  Browse : {result['url']}")
-    else:
-        sec_label = f" s {result['section']}" if result['section'] else ""
-        lines.append(f"\n  Act     : {result['act']}{sec_label}")
-        lines.append(f"  Chapter : {result['cap']}")
-        lines.append(f"  Source  : {result['url']}")
-        lines.append(f"\n{result['text']}")
-
-    lines.append("\n" + "=" * 60)
-    return "\n".join(lines)
-
-
-def search_statutes(query: str) -> str:
+def search_statutes(keyword: str) -> list:
     """
-    Search AGC statutes online for a query term.
-    Returns the raw search results page text for the LLM to parse.
+    Return a list of (full_name, cap_number) tuples for all known statutes
+    whose name or abbreviation contains the given keyword.
     """
-    search_url = f"{AGC_BASE}/Search/Current/All?SearchPhrase={quote(query)}"
-    print(f"[STATUTE] Searching AGC for: {query}")
-    html = _fetch_url(search_url)
-    if not html:
-        return "Search failed — check internet connection."
-    return _strip_html(html)[:3000]
+    kw = keyword.lower().strip()
+    seen = set()
+    results = []
+    for key, (full_name, cap) in KNOWN_STATUTES.items():
+        if kw in key or kw in full_name.lower():
+            if full_name not in seen:
+                seen.add(full_name)
+                results.append((full_name, cap))
+    return results
+
+
+# ── PUBLIC ENTRY POINT ─────────────────────────────────────────────────────────
+
+def lookup_statute(query: str) -> str:
+    """
+    Accept a free-text query (e.g. 'section 5(1) MDA' or 'Penal Code s 300'),
+    detect the referenced act and section, and return a formatted reference string.
+
+    This is the primary entry point called by api.py and app.py.
+    It delegates to lookup_section() internally.
+
+    Returns an empty string if no known statute is detected in the query.
+    """
+    act_name, cap = _detect_act(query)
+    if not act_name:
+        return ""
+    section = _detect_section(query)
+    return format_statute_result(act_name, cap, section)
+
+
+# ── ALIAS ─────────────────────────────────────────────────────────────────────
+# lookup_statute is the primary function. The alias below is kept for any
+# future code that may call lookup_section(query) with a free-text argument.
+lookup_statute_alias = lookup_statute
 
 
 if __name__ == "__main__":
     import sys
-
-    if len(sys.argv) >= 3:
-        act     = sys.argv[1]
-        section = sys.argv[2]
-    elif len(sys.argv) == 2:
-        act     = sys.argv[1]
-        section = None
-    else:
-        # Default test
-        act     = "MDA"
-        section = "5"
-
-    result = lookup_section(act, section)
-    print(format_statute_result(result))
+    test_queries = [
+        "What is the punishment under section 5(1) MDA?",
+        "Penal Code s 300 murder",
+        "Is this a CPC section 228 issue?",
+        "Companies Act director's duty",
+    ]
+    queries = sys.argv[1:] if len(sys.argv) > 1 else test_queries
+    for q in queries:
+        result = lookup_statute(q)
+        print(f"\nQuery : {q}")
+        print(result if result else "  (no known statute detected)")

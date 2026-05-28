@@ -1,3 +1,7 @@
+# FILE: treatment_analyzer.py
+# LOCATION: C:\Users\Admin\Desktop\ai-agent-system\treatment_analyzer.py
+# ACTION: Replace entire file
+
 import json
 import os
 import re
@@ -24,8 +28,11 @@ NEUTRAL_KEYWORDS = [
 def _load_db():
     if not os.path.exists(DB_PATH):
         return []
-    with open(DB_PATH, "r") as f:
-        data = json.load(f)
+    try:
+        with open(DB_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -64,6 +71,23 @@ def _classify_treatment(chunk: str) -> str:
     return "unknown"
 
 def _llm_classify(target: str, source: str, chunk: str) -> dict:
+    # Use keyword pre-filter first — only invoke LLM for ambiguous cases
+    keyword_result = _classify_treatment(chunk)
+    if keyword_result != "unknown":
+        # Keyword match is decisive — build a result without an LLM call
+        label_map = {
+            "positive": "APPLIED",
+            "negative": "NOT FOLLOWED",
+            "neutral":  "CONSIDERED",
+        }
+        return {
+            "source":      source,
+            "treatment":   label_map[keyword_result],
+            "explanation": f"Keyword-classified as {keyword_result}.",
+            "paragraph":   "not identified",
+            "chunk":       chunk
+        }
+
     prompt = f"""You are a Singapore law case citator assistant.
 Do not use any markdown formatting. Do not use bold, italic, or headings. Plain text only.
 
@@ -113,6 +137,9 @@ def analyse_treatment(target_case: str) -> dict:
     """
     Find all cases in the database that cite the target case,
     classify their treatment, and return a structured report.
+    Keyword-based pre-filtering is applied to avoid an LLM call for
+    every citing case — the LLM is only invoked when keyword matching
+    returns "unknown".
     """
     db   = _load_db()
     hits = _find_citing_chunks(target_case, db)

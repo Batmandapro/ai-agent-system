@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import datetime
@@ -60,6 +61,9 @@ RESEARCH_JOBS = {}
 
 SYSTEM_CONTEXT = """You are an expert Python developer assisting with a Singapore Legal AI system.
 
+DO NOT RUSH. Think carefully and thoroughly before responding. Consider the full consequences
+of every suggestion before writing a single line of output.
+
 Project architecture:
 - LLM: llama3.1 via Ollama (http://localhost:11434/api/generate)
 - Embeddings: nomic-embed-text via Ollama
@@ -73,7 +77,157 @@ Coding conventions:
 - No markdown formatting in LLM output (plain text only)
 - Atomic file saves: write to .tmp file first, then os.replace() to final path
 - All optional imports wrapped in try/except with a boolean flag
+
+CRITICAL RULE — IMPACT ASSESSMENT REQUIRED:
+Before making ANY suggestion, fix, or rewrite, you MUST first assess the full pipeline impact.
+For every proposed change, explicitly state:
+1. IMPACT ASSESSMENT: Which other files in the pipeline are affected by this change (if any), and why.
+2. REQUIRED ALIGNED CHANGES: The exact corresponding changes needed in those other files to keep the system consistent.
+3. Only then present the suggested fix or rewrite.
+If a change affects no other files, you must still explicitly state "No other files are affected" so the developer knows the assessment was done.
+
+CRITICAL RULE — NO PLACEHOLDERS:
+NEVER use placeholder values such as "your_model_here", "<insert_key>", "TODO", "...", or any
+stand-in that leaves the code non-functional. Every value you write must be the actual, correct
+value already used by this project, as confirmed in the LIVE PROJECT ENTITIES section below.
+If you are unsure of a value, say so explicitly in plain text BEFORE the code — do not guess.
+
+CRITICAL RULE — CODE DELIMITERS:
+Whenever you output code (whether a full file or a snippet), you MUST wrap it exactly as follows:
+
+=== CODE BEGIN: <filename> ===
+<code here>
+=== CODE END: <filename> ===
+
+This applies to every piece of code in your response without exception.
 """
+
+
+# ---------------------------------------------------------------------------
+# Entity scanner — reads project files at startup to extract live values
+# ---------------------------------------------------------------------------
+
+def _scan_project_entities():
+    """Scan all .py files in PROJECT_ROOT and extract key entities.
+
+    Returns a dict of discovered values covering: LLM models, URLs, DB paths,
+    embedding models, class names, and inter-file function references.
+    This is injected into every /agent prompt so the LLM never guesses.
+    """
+    entities = {
+        "llm_models":       [],
+        "embedding_models": [],
+        "ollama_urls":      [],
+        "db_paths":         [],
+        "db_keys":          [],
+        "flask_port":       None,
+        "classes":          {},   # filename -> [class names]
+        "functions":        {},   # filename -> [top-level function names]
+        "imports":          {},   # filename -> [imported module names]
+        "file_list":        [],
+    }
+
+    py_files = sorted(
+        f for f in os.listdir(PROJECT_ROOT)
+        if f.endswith(".py") and os.path.isfile(os.path.join(PROJECT_ROOT, f))
+    )
+    entities["file_list"] = py_files
+
+    for fname in py_files:
+        path = os.path.join(PROJECT_ROOT, fname)
+        try:
+            src = open(path, "r", encoding="utf-8").read()
+        except OSError:
+            continue
+
+        # LLM model names (e.g. "llama3.1", "gemini-2.5-flash", "nomic-embed-text")
+        for m in re.findall(r'["\']([a-zA-Z0-9][a-zA-Z0-9.:\-_/]+)["\']', src):
+            if any(kw in m.lower() for kw in ("llama", "gemini", "gpt", "claude", "mistral", "phi", "nomic", "embed")):
+                target = entities["llm_models"] if "embed" not in m.lower() else entities["embedding_models"]
+                if m not in target:
+                    target.append(m)
+
+        # Ollama / API URLs
+        for u in re.findall(r'["\']https?://[^"\' ]+["\']', src):
+            u = u.strip("'\"")
+            if u not in entities["ollama_urls"]:
+                entities["ollama_urls"].append(u)
+
+        # DB / data file paths
+        for p in re.findall(r'["\']data/[^"\' ]+\.json["\']', src):
+            p = p.strip("'\"")
+            if p not in entities["db_paths"]:
+                entities["db_paths"].append(p)
+
+        # DB dict keys used in vector store entries
+        for k in re.findall(r'\[[\'"](text|chunk|source|folder|vector)[\'"]\]', src):
+            if k not in entities["db_keys"]:
+                entities["db_keys"].append(k)
+
+        # Flask port
+        port_match = re.search(r'port\s*=\s*(\d+)', src)
+        if port_match and entities["flask_port"] is None:
+            entities["flask_port"] = port_match.group(1)
+
+        # Class names
+        classes = re.findall(r'^class\s+(\w+)', src, re.MULTILINE)
+        if classes:
+            entities["classes"][fname] = classes
+
+        # Top-level function names
+        funcs = re.findall(r'^def\s+(\w+)', src, re.MULTILINE)
+        if funcs:
+            entities["functions"][fname] = funcs
+
+        # Imported module names
+        imps = re.findall(r'^(?:import|from)\s+(\S+)', src, re.MULTILINE)
+        if imps:
+            entities["imports"][fname] = imps
+
+    return entities
+
+
+def _build_live_context():
+    """Return a formatted plain-text block of live project entities.
+
+    This is prepended to every /agent prompt so the LLM always works
+    from actual values, never from assumptions or placeholders.
+    """
+    e = _scan_project_entities()
+
+    lines = [
+        "LIVE PROJECT ENTITIES (scanned from disk — use these exact values, never placeholders):",
+        "",
+    ]
+
+    lines.append(f"Project files present: {', '.join(e['file_list']) if e['file_list'] else '(none found)'}")
+
+    if e["llm_models"]:
+        lines.append(f"LLM models in use: {', '.join(e['llm_models'])}")
+    if e["embedding_models"]:
+        lines.append(f"Embedding models in use: {', '.join(e['embedding_models'])}")
+    if e["ollama_urls"]:
+        lines.append(f"API / Ollama URLs in use: {', '.join(e['ollama_urls'])}")
+    if e["db_paths"]:
+        lines.append(f"Database file paths: {', '.join(e['db_paths'])}")
+    if e["db_keys"]:
+        lines.append(f"Database dict keys confirmed in source: {', '.join(e['db_keys'])}")
+    if e["flask_port"]:
+        lines.append(f"Flask server port: {e['flask_port']}")
+
+    if e["classes"]:
+        lines.append("")
+        lines.append("Classes per file:")
+        for fname, cls_list in e["classes"].items():
+            lines.append(f"  {fname}: {', '.join(cls_list)}")
+
+    if e["functions"]:
+        lines.append("")
+        lines.append("Top-level functions per file:")
+        for fname, fn_list in e["functions"].items():
+            lines.append(f"  {fname}: {', '.join(fn_list)}")
+
+    return "\n".join(lines)
 
 # ---------------------------------------------------------------------------
 # Helper utilities
@@ -130,6 +284,30 @@ def _call_ollama(prompt):
     )
     resp.raise_for_status()
     return resp.json().get("response", "").strip()
+
+
+def _call_agent_llm(prompt):
+    """Call Gemini 2.5 Flash for the /agent endpoint.
+
+    Falls back to Ollama llama3.1 if GEMINI_API_KEY is not set or
+    google-generativeai is not installed.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+
+    if api_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            resp  = model.generate_content(prompt)
+            return resp.text.strip()
+        except ImportError:
+            pass  # google-generativeai not installed — fall through to Ollama
+        except Exception:
+            pass  # Gemini call failed — fall through to Ollama
+
+    # Fallback: local Ollama
+    return _call_ollama(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +433,9 @@ def agent():
 
         cmd_lower = command.lower()
 
+        # Scan project files to build live entity context for this request
+        live_ctx = _build_live_context()
+
         # ── list / show files ──────────────────────────────────────────────
         if cmd_lower in ("list files", "show files"):
             py_files = sorted(
@@ -279,7 +460,6 @@ def agent():
 
         # ── review / check / audit ────────────────────────────────────────
         elif cmd_lower.startswith(("review ", "check ", "audit ")):
-            # Extract the filename from the command (first token after the verb)
             parts    = command.split(None, 1)
             filename = parts[1].strip() if len(parts) > 1 else ""
             if not filename.endswith(".py"):
@@ -290,19 +470,22 @@ def agent():
             else:
                 prompt = (
                     f"{SYSTEM_CONTEXT}\n\n"
+                    f"{live_ctx}\n\n"
                     f"Please review the following file ({filename}) for bugs, interface mismatches "
                     f"with the rest of the pipeline, and potential improvements. "
                     f"Be specific and reference line numbers where possible. "
+                    f"For each issue found, state: (1) IMPACT ASSESSMENT — which other pipeline files are affected; "
+                    f"(2) REQUIRED ALIGNED CHANGES — what must change in those files to stay consistent. "
+                    f"If no other files are affected by an issue, explicitly state so. "
                     f"Use plain text only — no markdown.\n\n"
-                    f"--- {filename} ---\n{content}\n---"
+                    f"=== FILE: {filename} ===\n{content}\n=== END FILE ==="
                 )
-                result = _call_ollama(prompt)
+                result = _call_agent_llm(prompt)
 
         # ── rewrite ───────────────────────────────────────────────────────
         elif cmd_lower.startswith("rewrite "):
             parts    = command.split(None, 1)
             rest     = parts[1].strip() if len(parts) > 1 else ""
-            # Expect: "rewrite ingest.py to add retry logic"
             tokens   = rest.split(None, 1)
             filename = tokens[0].strip()
             improvement_desc = tokens[1].strip() if len(tokens) > 1 else "improve code quality"
@@ -314,12 +497,16 @@ def agent():
             else:
                 prompt = (
                     f"{SYSTEM_CONTEXT}\n\n"
+                    f"{live_ctx}\n\n"
                     f"Rewrite the following file ({filename}) with this improvement: {improvement_desc}\n\n"
-                    f"Return only the complete rewritten Python source code — no explanations, "
-                    f"no markdown fences, no commentary. The code must be paste-ready.\n\n"
-                    f"--- {filename} ---\n{content}\n---"
+                    f"BEFORE providing the rewritten code, first produce a plain-text IMPACT ASSESSMENT: "
+                    f"list every other file in the pipeline that will need a corresponding change as a result of this rewrite, "
+                    f"and state exactly what must change in each. If no other files are affected, explicitly state so.\n\n"
+                    f"Then return the complete rewritten Python source code wrapped in delimiters:\n"
+                    f"=== CODE BEGIN: {filename} ===\n<code>\n=== CODE END: {filename} ===\n\n"
+                    f"=== FILE: {filename} ===\n{content}\n=== END FILE ==="
                 )
-                result = _call_ollama(prompt)
+                result = _call_agent_llm(prompt)
 
         # ── troubleshoot / error / problem ────────────────────────────────
         elif cmd_lower.startswith(("troubleshoot", "error", "problem")):
@@ -335,26 +522,37 @@ def agent():
             for fname in core_files:
                 content = _read_project_file(fname)
                 if content:
-                    file_sections.append(f"--- {fname} ---\n{content}\n---")
+                    file_sections.append(f"=== FILE: {fname} ===\n{content}\n=== END FILE ===")
             combined = "\n\n".join(file_sections) if file_sections else "(no core files found)"
             prompt = (
                 f"{SYSTEM_CONTEXT}\n\n"
+                f"{live_ctx}\n\n"
                 f"The user reports: {command}\n\n"
                 f"Please diagnose the most likely causes of this problem by examining the core "
-                f"project files below. Suggest specific fixes. Use plain text only — no markdown.\n\n"
+                f"project files below. For each fix you suggest: "
+                f"(1) state the IMPACT ASSESSMENT — which other pipeline files are affected by that fix; "
+                f"(2) state the REQUIRED ALIGNED CHANGES needed in those files to keep the system consistent. "
+                f"If a fix affects no other files, explicitly state so. "
+                f"Wrap any code fixes in: === CODE BEGIN: <filename> === ... === CODE END: <filename> ===\n"
+                f"Use plain text only — no markdown.\n\n"
                 f"{combined}"
             )
-            result = _call_ollama(prompt)
+            result = _call_agent_llm(prompt)
 
         # ── general improvement / suggestion / other ───────────────────────
         else:
             prompt = (
                 f"{SYSTEM_CONTEXT}\n\n"
+                f"{live_ctx}\n\n"
                 f"The user asks: {command}\n\n"
                 f"Provide a thoughtful, specific response relevant to the Singapore Legal AI project. "
+                f"If your response involves any code change or suggestion, first state the IMPACT ASSESSMENT "
+                f"(which other pipeline files are affected) and any REQUIRED ALIGNED CHANGES needed. "
+                f"If no other files are affected, explicitly state so. "
+                f"Wrap any code in: === CODE BEGIN: <filename> === ... === CODE END: <filename> ===\n"
                 f"Use plain text only — no markdown."
             )
-            result = _call_ollama(prompt)
+            result = _call_agent_llm(prompt)
 
         return jsonify({
             "response":  result,

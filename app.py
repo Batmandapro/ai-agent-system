@@ -1,3 +1,8 @@
+# FILE: app.py
+# LOCATION: C:\Users\Admin\Desktop\ai-agent-system\app.py
+# ACTION: Replace entire file
+
+import json
 import os
 from legal_faiss import LegalFAISS
 from legal_distiller import distil, extract_case_name
@@ -63,19 +68,33 @@ def detect_research_query(query):
 
 # ── MEMORY HELPERS ────────────────────────────────────────────────────────────
 
+CHAT_HISTORY_PATH = "data/chats.json"
+
 def load_chat_history():
-    path = "data/chats.json"
-    if os.path.exists(path):
-        import json
-        with open(path, "r", encoding="utf-8") as f:
+    """
+    Load chat history from disk. Returns an empty list if the file does
+    not exist or is corrupted (corrupt file is silently discarded rather
+    than crashing the session).
+    """
+    if not os.path.exists(CHAT_HISTORY_PATH):
+        return []
+    try:
+        with open(CHAT_HISTORY_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    return []
+    except (json.JSONDecodeError, OSError):
+        return []
 
 def save_chat_history(history):
-    import json
+    """
+    Save chat history atomically: write to a temporary file then replace
+    the target path. This prevents corruption if the process is interrupted
+    during the write.
+    """
     os.makedirs("data", exist_ok=True)
-    with open("data/chats.json", "w", encoding="utf-8") as f:
+    tmp_path = CHAT_HISTORY_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, CHAT_HISTORY_PATH)
 
 # ── MAIN CHAT LOOP ────────────────────────────────────────────────────────────
 
