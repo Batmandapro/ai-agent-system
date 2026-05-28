@@ -18,7 +18,7 @@ except ImportError:
     STATUTE_TOOL = False
 
 try:
-    from treatment_analyzer import analyse_treatment
+    from treatment_analyzer import analyse_treatment, format_treatment_report
     TREATMENT_TOOL = True
 except ImportError:
     TREATMENT_TOOL = False
@@ -35,46 +35,53 @@ rag = LegalFAISS()
 # ── AUTO TOOL SELECTION ───────────────────────────────────────────────────────
 
 def detect_statute_ref(query):
+    """Return True if the query appears to reference a named statute."""
     statutes = [
         "penal code", "pc", "mda", "misuse of drugs",
         "cpc", "criminal procedure code", "evidence act",
         "mla", "money laundering", "corruption",
         "pca", "prevention of corruption",
         "arms offences", "arms act",
-        "computer misuse", "cma"
+        "computer misuse", "cma",
     ]
     q = query.lower()
     return any(s in q for s in statutes)
 
+
 def detect_treatment_query(query):
+    """Return True if the query asks about how a case was treated."""
     keywords = [
         "treatment of", "treated in", "cited in",
         "followed in", "distinguished in", "overruled",
         "positive treatment", "negative treatment",
-        "how has", "subsequent cases"
+        "how has", "subsequent cases",
     ]
     q = query.lower()
     return any(k in q for k in keywords)
 
+
 def detect_research_query(query):
+    """Return True if the query requests external case research."""
     keywords = [
         "find cases", "search for", "look up",
         "are there any cases", "what cases",
         "recent cases", "latest cases",
-        "commonlii", "elitigation"
+        "commonlii", "elitigation",
     ]
     q = query.lower()
     return any(k in q for k in keywords)
+
 
 # ── MEMORY HELPERS ────────────────────────────────────────────────────────────
 
 CHAT_HISTORY_PATH = "data/chats.json"
 
+
 def load_chat_history():
-    """
-    Load chat history from disk. Returns an empty list if the file does
-    not exist or is corrupted (corrupt file is silently discarded rather
-    than crashing the session).
+    """Load chat history from disk.
+
+    Returns an empty list if the file does not exist or is corrupted.
+    Corrupt files are silently discarded rather than crashing the session.
     """
     if not os.path.exists(CHAT_HISTORY_PATH):
         return []
@@ -84,17 +91,39 @@ def load_chat_history():
     except (json.JSONDecodeError, OSError):
         return []
 
+
 def save_chat_history(history):
-    """
-    Save chat history atomically: write to a temporary file then replace
-    the target path. This prevents corruption if the process is interrupted
-    during the write.
+    """Save chat history atomically.
+
+    Writes to a temporary file first, then uses os.replace() to swap it in.
+    This prevents corruption if the process is interrupted mid-write.
     """
     os.makedirs("data", exist_ok=True)
     tmp_path = CHAT_HISTORY_PATH + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, CHAT_HISTORY_PATH)
+
+
+# ── LIST SOURCES HELPER ───────────────────────────────────────────────────────
+
+def list_sources():
+    """Return a deduplicated list of all source filenames in the database.
+
+    Uses the internal _db list on the LegalFAISS instance directly,
+    since LegalFAISS.query() is the only public retrieval method.
+    """
+    try:
+        db = rag._db
+        seen = []
+        for entry in db:
+            src = entry.get("source", "")
+            if src and src not in seen:
+                seen.append(src)
+        return seen
+    except Exception:
+        return []
+
 
 # ── MAIN CHAT LOOP ────────────────────────────────────────────────────────────
 
@@ -131,7 +160,7 @@ def chat():
             continue
 
         if query.lower() == "sources":
-            sources = rag.list_sources()
+            sources = list_sources()
             if sources:
                 print(f"\n[{len(sources)} sources in database]")
                 for s in sources:
@@ -142,6 +171,9 @@ def chat():
             continue
 
         # ── ROUTE ─────────────────────────────────────────────────────────────
+        # intent_router.route() returns a plain string.
+        # detect_area_of_law is handled inside the router itself for api.py;
+        # in the CLI we pass area=None to let the vector store search globally.
         mode = route(query)
         print(f"\n[Mode: {mode.upper()}]")
 
@@ -162,9 +194,9 @@ def chat():
             print("[Tool: Treatment Analyser]")
             try:
                 treatment_result = analyse_treatment(query)
-                if treatment_result:
+                if treatment_result and treatment_result.get("total", 0) > 0:
                     print("\n── Treatment Analysis ───────────────────────────")
-                    print(treatment_result)
+                    print(format_treatment_report(treatment_result))
                     print("─────────────────────────────────────────────────\n")
             except Exception as e:
                 print(f"[Treatment analysis failed: {e}]")
@@ -183,18 +215,20 @@ def chat():
                 except Exception as e:
                     print(f"[Research agent failed: {e}]")
 
-        # ── RETRIEVAL — mode-aware ─────────────────────────────────────────────
+        # ── RETRIEVAL ─────────────────────────────────────────────────────────
+        # LegalFAISS.query() is the only retrieval method.
+        # For case_summary mode, we still call query() — the case name extracted
+        # by extract_case_name() is printed for user feedback only; the area
+        # filter in query() is the correct narrowing mechanism.
         if mode == "case_summary":
             case_name = extract_case_name(query)
             if case_name:
-                print(f"[Retrieval: case-filtered for '{case_name}']")
-                raw_chunks = rag.search_by_source(query, case_name, top_k=10)
-            else:
-                raw_chunks = rag.search(query, top_k=8)
-        else:
-            raw_chunks = rag.search(query, top_k=8)
+                print(f"[Retrieval: searching for '{case_name}']")
+        raw_chunks = rag.query(query)
 
-        chunks = distil(query, raw_chunks, top_k=6)
+        # ── DISTILLATION ──────────────────────────────────────────────────────
+        # distil() accepts exactly one argument: the list of raw chunks.
+        chunks = distil(raw_chunks)
 
         if not chunks:
             print(format_no_results(query))
@@ -202,13 +236,14 @@ def chat():
 
         # ── SOURCES ───────────────────────────────────────────────────────────
         sources = list(dict.fromkeys(
-            c.get("source") or c.get("meta", {}).get("source", "Unknown")
-            for c in chunks
+            c.get("source", "Unknown") for c in chunks
         ))
 
         # ── REASONING ─────────────────────────────────────────────────────────
+        # reason(query, intent, chunks) — intent is the second positional argument.
+        # mode is used directly as the intent string (both are the same routing token).
         try:
-            response = reason(query, chunks, mode=mode)
+            response = reason(query, mode, chunks)
         except Exception as e:
             print(format_error(str(e)))
             continue

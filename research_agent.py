@@ -1,3 +1,7 @@
+# FILE: research_agent.py
+# LOCATION: C:\Users\Admin\Desktop\ai-agent-system\research_agent.py
+# ACTION: Replace entire file
+
 import os
 from intent_router import route
 from legal_faiss import LegalFAISS
@@ -6,8 +10,8 @@ from reasoning_engine import reason
 from formatter import format_response, format_error, format_no_results
 from treatment_analyzer import analyse_treatment, format_treatment_report
 
-MAX_COMMONLII_RESULTS   = 10
-MAX_COMMONLII_DOWNLOAD  = 5
+MAX_COMMONLII_RESULTS    = 10
+MAX_COMMONLII_DOWNLOAD   = 5
 MAX_ELITIGATION_RESULTS  = 10
 MAX_ELITIGATION_DOWNLOAD = 5
 
@@ -20,29 +24,35 @@ def _prompt_user_confirmation(message: str) -> bool:
     choice = input("  Proceed? (y/n): ").strip().lower()
     return choice in ("y", "yes")
 
+
 def _re_ingest():
     print("\n[AGENT] Re-ingesting newly downloaded cases...")
     import ingest
     ingest.main()
 
+
 # ── RESEARCH PIPELINE ─────────────────────────────────────────────────────────
 
 def _search_local(query: str, mode: str) -> dict:
+    """Search the local vector store and return a result dict.
+
+    Uses LegalFAISS.query() — the only retrieval method available.
+    For case_summary mode, the case name is extracted for informational
+    display; query() handles the retrieval without a source filter.
+    distil() accepts exactly one argument (the raw chunks list).
+    """
     print(f"\n[AGENT] Step 1: Searching local database...")
 
     if mode == "case_summary":
         case_name = extract_case_name(query)
         if case_name:
-            raw_chunks = _rag.search_by_source(query, case_name, top_k=12)
-        else:
-            raw_chunks = _rag.search(query, top_k=12)
-    else:
-        raw_chunks = _rag.search(query, top_k=12)
+            print(f"  [case_summary] Searching for '{case_name}'")
 
-    chunks  = distil(query, raw_chunks, top_k=6)
+    raw_chunks = _rag.query(query)
+    chunks     = distil(raw_chunks)
+
     sources = list(dict.fromkeys(
-        c.get("source") or c.get("meta", {}).get("source", "Unknown")
-        for c in chunks
+        c.get("source", "Unknown") for c in chunks
     ))
 
     print(f"  Found {len(chunks)} relevant chunks locally")
@@ -52,10 +62,12 @@ def _search_local(query: str, mode: str) -> dict:
         "mode":        mode,
         "sources":     sources,
         "chunk_count": len(chunks),
-        "raw_chunks":  chunks
+        "raw_chunks":  chunks,
     }
 
+
 def _search_free_sources(query: str) -> list:
+    """Search CommonLII and judiciary.gov.sg for additional cases."""
     saved = []
     try:
         from commonlii_tool import search_and_download as commonlii_search
@@ -64,7 +76,7 @@ def _search_free_sources(query: str) -> list:
             query,
             database="all",
             max_results=MAX_COMMONLII_RESULTS,
-            max_download=MAX_COMMONLII_DOWNLOAD
+            max_download=MAX_COMMONLII_DOWNLOAD,
         )
         saved.extend(paths)
     except Exception as e:
@@ -76,7 +88,7 @@ def _search_free_sources(query: str) -> list:
         paths = judiciary_search(
             query,
             max_results=MAX_ELITIGATION_RESULTS,
-            max_download=MAX_ELITIGATION_DOWNLOAD
+            max_download=MAX_ELITIGATION_DOWNLOAD,
         )
         saved.extend(paths)
     except Exception as e:
@@ -84,7 +96,9 @@ def _search_free_sources(query: str) -> list:
 
     return saved
 
+
 def _search_lawnet(query: str) -> list:
+    """Fall back to a supervised Lawnet browser session."""
     try:
         from lawnet_tool import supervised_search
         print(f"\n[AGENT] Step 3: Falling back to Lawnet (supervised session)...")
@@ -96,18 +110,19 @@ def _search_lawnet(query: str) -> list:
         print(f"  [SKIP] Lawnet session failed: {e}")
         return []
 
+
 # ── PUBLIC API ────────────────────────────────────────────────────────────────
 
 def research(query: str, use_online: bool = True, use_lawnet: bool = False) -> str:
-    """
-    Full research pipeline:
-    1. Search local vector store
-    2. If insufficient — search CommonLII + judiciary.gov.sg (free)
-    3. Re-ingest downloaded cases
-    4. Re-search local store with new cases
-    5. If still insufficient and use_lawnet=True — supervised Lawnet session
-    6. Reason over all retrieved context
-    7. Return formatted research memo
+    """Full research pipeline.
+
+    1. Search local vector store.
+    2. If insufficient — search CommonLII + judiciary.gov.sg (free).
+    3. Re-ingest downloaded cases and reload the vector store.
+    4. Re-search local store with new cases.
+    5. If still insufficient and use_lawnet=True — supervised Lawnet session.
+    6. Reason over all retrieved context.
+    7. Return formatted research memo.
     """
     mode = route(query)
     print(f"\n[AGENT] Research mode: {mode.upper()}")
@@ -143,17 +158,14 @@ def research(query: str, use_online: bool = True, use_lawnet: bool = False) -> s
     print(f"\n[AGENT] Reasoning over {local_result['chunk_count']} chunks from "
           f"{len(local_result['sources'])} source(s)...")
 
-    raw_answer = reason(
-        query=query,
-        context_chunks=local_result["raw_chunks"],
-        mode=mode
-    )
+    # reason(query, intent, chunks) — intent is the second positional argument.
+    raw_answer = reason(query, mode, local_result["raw_chunks"])
 
     response = format_response(
         raw=raw_answer,
         mode=mode,
         sources=local_result["sources"],
-        query=query
+        query=query,
     )
 
     if new_files:
@@ -165,11 +177,14 @@ def research(query: str, use_online: bool = True, use_lawnet: bool = False) -> s
 
 
 def research_with_treatment(query: str, target_case: str, **kwargs) -> str:
+    """Run the research pipeline and append a treatment analysis for target_case."""
     research_output  = research(query, **kwargs)
     treatment_report = analyse_treatment(target_case)
     treatment_output = format_treatment_report(treatment_report)
     return research_output + "\n" + treatment_output
 
+
+# ── INTERACTIVE MODE ──────────────────────────────────────────────────────────
 
 BANNER = """
 ============================================================
@@ -182,6 +197,7 @@ BANNER = """
     exit                      — Quit
 ============================================================
 """
+
 
 def run_interactive():
     print(BANNER)
