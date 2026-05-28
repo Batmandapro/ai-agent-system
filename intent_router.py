@@ -1,3 +1,7 @@
+# FILE: intent_router.py
+# LOCATION: C:\Users\Admin\Desktop\ai-agent-system\intent_router.py
+# ACTION: Replace entire file
+
 import re
 
 # ── INTENT ROUTER ─────────────────────────────────────────────────────────────
@@ -12,7 +16,7 @@ import re
 #   code_review  — review a project file for bugs and improvements
 #   self_improve — propose self-improvement strategies for the system
 
-# ── AREA-OF-LAW DETECTION ────────────────────────────────────────────────────
+# ── AREA-OF-LAW DETECTION ─────────────────────────────────────────────────────
 
 _AREA_KEYWORDS = {
     "criminal": [

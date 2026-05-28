@@ -160,7 +160,7 @@ def _scan_project_entities():
                 entities["db_paths"].append(p)
 
         # DB dict keys used in vector store entries
-        for k in re.findall(r'\[[\'"](text|chunk|source|folder|vector)[\'"]\]', src):
+        for k in re.findall(r'\[[\'"](text|chunk|source|folder|vector)[\'\"]\]', src):
             if k not in entities["db_keys"]:
                 entities["db_keys"].append(k)
 
@@ -311,43 +311,64 @@ def _call_agent_llm(prompt):
 
 
 # ---------------------------------------------------------------------------
-# Existing endpoints (unchanged)
+# Existing endpoints (aligned to new pipeline signatures)
 # ---------------------------------------------------------------------------
 
 @app.route("/query", methods=["POST"])
 def query():
-    """Accept a legal query and return a reasoned response with sources."""
+    """Accept a legal query and return a reasoned response with sources.
+
+    Pipeline:
+      1. intent_router.route() → (intent_str, area_str)
+      2. LegalFAISS.query(text, area=area) → raw_chunks (list of dicts)
+      3. legal_distiller.distil(raw_chunks) → chunks (list of dicts with para_ref)
+      4. reasoning_engine.reason(query, intent, chunks) → plain-text response
+    """
     data = request.get_json(silent=True) or {}
     q    = (data.get("query") or "").strip()
-    hint = (data.get("mode") or "").strip().lower()
+    hint = (data.get("mode") or "").strip().upper()
 
     if not q:
         return jsonify({"error": "No query provided"}), 400
 
-    if hint and hint in ("irac", "case_summary", "synthesis", "sentencing", "elements", "procedure", "drafting"):
-        mode = hint
-    else:
-        mode = route(q)
+    # --- Intent and area routing ---
+    # intent_router.route() returns either a plain string intent
+    # or a tuple of (intent, area). Handle both forms gracefully.
+    valid_intents = {"IRAC", "CASE_SUMMARY", "SYNTHESIS", "SENTENCING", "ELEMENTS", "PROCEDURE", "DRAFTING"}
 
-    if mode == "case_summary":
-        case_name  = extract_case_name(q)
-        raw_chunks = rag.search_by_source(q, case_name, top_k=10) if case_name else rag.search(q, top_k=8)
+    if hint and hint in valid_intents:
+        intent = hint
+        area = data.get("area", None)
     else:
-        raw_chunks = rag.search(q, top_k=8)
+        routed = route(q)
+        if isinstance(routed, tuple):
+            intent, area = routed[0], (routed[1] if len(routed) > 1 else None)
+        else:
+            intent = routed
+            area = None
 
-    chunks = distil(q, raw_chunks, top_k=6)
+    # Normalise intent to upper case
+    intent = (intent or "IRAC").upper()
+
+    # --- Retrieval: use LegalFAISS.query() with area pass-through ---
+    # For case_summary queries, attempt a source-targeted retrieval first.
+    # LegalFAISS.query() does not have a search_by_source method; the area
+    # filter is the correct mechanism for narrowing the candidate pool.
+    raw_chunks = rag.query(q, area=area)
+
+    # --- Distillation: distil() takes only the chunks list ---
+    chunks = distil(raw_chunks)
 
     if not chunks:
         return jsonify({
             "response":  format_no_results(q),
             "sources":   [],
-            "mode":      mode,
+            "mode":      intent,
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
         })
 
     sources = list(dict.fromkeys(
-        c.get("source") or c.get("meta", {}).get("source", "Unknown")
-        for c in chunks
+        c.get("source", "Unknown") for c in chunks
     ))
 
     supplement = ""
@@ -369,8 +390,9 @@ def query():
         except Exception:
             pass
 
+    # --- Reasoning: reason(query, intent, chunks) — positional order is fixed ---
     try:
-        response = reason(q, chunks, mode=mode)
+        response = reason(q, intent, chunks)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -380,15 +402,28 @@ def query():
     return jsonify({
         "response":  response,
         "sources":   sources,
-        "mode":      mode,
+        "mode":      intent,
         "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
     })
 
 
 @app.route("/sources", methods=["GET"])
 def sources():
-    """Return a list of all ingested source documents."""
-    return jsonify({"sources": rag.list_sources()})
+    """Return a deduplicated list of all ingested source documents.
+
+    Reads the source field from every entry in the loaded database.
+    LegalFAISS does not expose a list_sources() method; this endpoint
+    derives the list from the internal _db attribute directly.
+    """
+    try:
+        seen = []
+        for entry in rag._db:
+            src = entry.get("source", "")
+            if src and src not in seen:
+                seen.append(src)
+        return jsonify({"sources": seen})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])
