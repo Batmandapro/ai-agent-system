@@ -101,7 +101,7 @@ def extract_text_from_pdf(file_path: Path) -> tuple[str, str]:
     # ── Tier 1: MarkItDown ────────────────────────────────────────────────────
     if _MARKITDOWN:
         try:
-            md   = MarkItDown()
+            md   = MarkItDown()  # type: ignore[misc]
             result = md.convert(str(file_path))
             text   = result.text_content or ""
             if len(text.strip()) >= MIN_TEXT_CHARS:
@@ -115,7 +115,7 @@ def extract_text_from_pdf(file_path: Path) -> tuple[str, str]:
     # ── Tier 2: pdfminer ─────────────────────────────────────────────────────
     if _PDFMINER:
         try:
-            text = _pdfminer_extract(str(file_path)) or ""
+            text = _pdfminer_extract(str(file_path)) or ""  # type: ignore[misc]
             if len(text.strip()) >= MIN_TEXT_CHARS:
                 print(f"  [TEXT] pdfminer — clean text extracted successfully")
                 return text, "pdfminer"
@@ -130,10 +130,10 @@ def extract_text_from_pdf(file_path: Path) -> tuple[str, str]:
     if _OCR:
         print(f"  [OCR] Scanned PDF detected — this may take longer...")
         try:
-            images = convert_from_path(str(file_path))
+            images = convert_from_path(str(file_path))  # type: ignore[misc]
             text   = ""
             for i, img in enumerate(images):
-                page_text = pytesseract.image_to_string(img)
+                page_text = pytesseract.image_to_string(img)  # type: ignore[union-attr]
                 text += page_text
                 print(f"  [OCR] Page {i + 1}/{len(images)} processed")
             if text.strip():
@@ -269,7 +269,7 @@ def embed_with_progress(chunks: list, file_name: str) -> list[tuple]:
     Returns list of (chunk_text, vector_or_None) tuples in original order.
     """
     total   = len(chunks)
-    results = [None] * total
+    results: list = [None] * total
     done    = 0
 
     def _bar(d, t):

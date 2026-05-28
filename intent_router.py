@@ -74,7 +74,7 @@ def detect_area_of_law(query: str) -> str:
         for kw in keywords:
             if kw in q:
                 scores[area] += 1
-    best_area  = max(scores, key=scores.get)
+    best_area  = max(scores, key=lambda a: scores[a])
     best_score = scores[best_area]
     if best_score == 0:
         return "general"

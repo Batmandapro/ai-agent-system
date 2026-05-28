@@ -181,7 +181,7 @@ def chat():
         if STATUTE_TOOL and detect_statute_ref(query):
             print("[Tool: Statute Lookup]")
             try:
-                statute_result = lookup_statute(query)
+                statute_result = lookup_statute(query)  # type: ignore[misc]
                 if statute_result:
                     print("\n── Statute ──────────────────────────────────────")
                     print(statute_result)
@@ -193,10 +193,10 @@ def chat():
         if TREATMENT_TOOL and detect_treatment_query(query):
             print("[Tool: Treatment Analyser]")
             try:
-                treatment_result = analyse_treatment(query)
+                treatment_result = analyse_treatment(query)  # type: ignore[misc]
                 if treatment_result and treatment_result.get("total", 0) > 0:
                     print("\n── Treatment Analysis ───────────────────────────")
-                    print(format_treatment_report(treatment_result))
+                    print(format_treatment_report(treatment_result))  # type: ignore[misc]
                     print("─────────────────────────────────────────────────\n")
             except Exception as e:
                 print(f"[Treatment analysis failed: {e}]")
@@ -207,7 +207,7 @@ def chat():
             confirm = input("Proceed with external search? (y/n): ").strip().lower()
             if confirm == "y":
                 try:
-                    research_result = research(query)
+                    research_result = research(query)  # type: ignore[misc]
                     if research_result:
                         print("\n── Research Results ─────────────────────────────")
                         print(research_result)

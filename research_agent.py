@@ -74,7 +74,6 @@ def _search_free_sources(query: str) -> list:
         print(f"\n[AGENT] Step 2a: Searching CommonLII...")
         paths = commonlii_search(
             query,
-            database="all",
             max_results=MAX_COMMONLII_RESULTS,
             max_download=MAX_COMMONLII_DOWNLOAD,
         )

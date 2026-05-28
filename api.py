@@ -297,8 +297,8 @@ def _call_agent_llm(prompt):
     if api_key:
         try:
             import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
+            genai.configure(api_key=api_key)  # type: ignore[attr-defined]
+            model = genai.GenerativeModel("gemini-2.5-flash")  # type: ignore[attr-defined]
             resp  = model.generate_content(prompt)
             return resp.text.strip()
         except ImportError:
@@ -375,7 +375,7 @@ def query():
 
     if STATUTE_TOOL and _detect_statute_ref(q):
         try:
-            s = lookup_statute(q)
+            s = lookup_statute(q)  # type: ignore[misc]
             if s:
                 supplement += f"\n[Statute]\n{s}\n"
         except Exception:
@@ -383,7 +383,7 @@ def query():
 
     if TREATMENT_TOOL and _detect_treatment_query(q):
         try:
-            r = analyse_treatment(q)
+            r = analyse_treatment(q)  # type: ignore[misc]
             if r and r.get("total", 0) > 0:
                 from treatment_analyzer import format_treatment_report
                 supplement += "\n" + format_treatment_report(r)
@@ -649,8 +649,8 @@ def gemini():
                 "timestamp": timestamp,
             }), 400
 
-        genai.configure(api_key=api_key)
-        model    = genai.GenerativeModel("gemini-2.5-flash")
+        genai.configure(api_key=api_key)  # type: ignore[attr-defined]
+        model    = genai.GenerativeModel("gemini-2.5-flash")  # type: ignore[attr-defined]
         full_prompt = SYSTEM_CONTEXT + "\n\nUser: " + message
         resp     = model.generate_content(full_prompt)
 
